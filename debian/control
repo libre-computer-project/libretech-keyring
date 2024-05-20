@@ -1,0 +1,9 @@
+Source: libretech-keyring
+Priority: optional
+Section: misc
+Maintainer: Da Xue <da@libre.computer>
+Build-Depends: debhelper (>= 9)
+
+Package: libretech-keyring
+Architecture: all
+Description: GnuPG keys of Libre Computer
