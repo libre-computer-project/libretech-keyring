@@ -77,6 +77,8 @@ if [[ -f $pkg ]]; then
 		check "pacman package installs usr/share/pacman/keyrings/$f" grep -qx "usr/share/pacman/keyrings/$f" <<<"$list"
 	done
 	check "pacman package carries the install hook" grep -qx .INSTALL <<<"$list"
+	check "the install hook's stanza requires signatures (SigLevel = Required, not pacman's DatabaseOptional default)" \
+		grep -q '^    SigLevel = Required$' <(bsdtar -xOf "$pkg" .INSTALL 2>/dev/null)
 	check "pacman package is arch=any" grep -qx 'arch = any' <(bsdtar -xOf "$pkg" .PKGINFO 2>/dev/null)
 	mkdir -p "$T/k" && bsdtar -xf "$pkg" -C "$T/k" usr/share/pacman/keyrings 2>/dev/null
 	check "-trusted is the primary fingerprint with full trust" test "$(cat "$T/k/usr/share/pacman/keyrings/libre-computer-trusted")" = "$FPR:4:"

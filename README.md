@@ -12,7 +12,9 @@ package below is built from it.
 
 `test-packages.sh` builds the Fedora and Arch packages and checks their contents and how a renewed key reaches
 a host (rpm keeps an imported key, so `libre-computer-repos` deletes the stored copy before importing; pacman
-loads the keyring with `pacman-key --populate libre-computer`). The builds need `rpmbuild`, `makepkg`,
+loads the keyring with `pacman-key --populate libre-computer`). The Fedora package installs the repo definition;
+the pacman package cannot (pacman has no `conf.d`), so on install it prints the stanza to add to
+`/etc/pacman.conf`, with `SigLevel = Required` (pacman's default would take an unsigned database). The builds need `rpmbuild`, `makepkg`,
 `bsdtar` and `gpg`.
 
 When the key is renewed or rotated, replace `libre-computer-deb.gpg` with the signer's export of the public

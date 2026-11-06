@@ -10,4 +10,15 @@ post_install() {
 	if [ -x usr/bin/pacman-key ]; then
 		post_upgrade
 	fi
+	# pacman has no conf.d and a package does not edit pacman.conf: the repo stanza is the administrator's to
+	# add. SigLevel = Required: pacman's default (Required DatabaseOptional) would take an unsigned database.
+	cat <<'EOF'
+==> To use the Libre Computer repository, add to /etc/pacman.conf:
+
+    [libre-computer]
+    SigLevel = Required
+    Server = https://packages.libre.computer/arch/$repo/os/$arch
+
+    then: pacman -Sy
+EOF
 }
