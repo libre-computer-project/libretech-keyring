@@ -32,7 +32,9 @@ cp "$PKG_ROOT/packaging/rpm/libre-computer.repo" "$T/rpm/SOURCES/"
 cp "$PKG_ROOT/packaging/rpm/libre-computer-repos.spec" "$T/rpm/SPECS/"
 
 log "building libre-computer-repos $version from $(source_commit), key $(key_fpr "$T/gnupg")"
-rpmbuild --define "_topdir $T/rpm" --define "lc_version $version" --define "lc_keyid $(key_rpm_id "$T/gnupg")" \
+# _buildhost: the header names the published host, never the machine that built it
+rpmbuild --define "_topdir $T/rpm" --define "_buildhost deb.libre.computer" \
+	--define "lc_version $version" --define "lc_keyid $(key_rpm_id "$T/gnupg")" \
 	-bb "$T/rpm/SPECS/libre-computer-repos.spec" >"$T/rpmbuild.log" 2>&1 ||
 	{ tail -20 "$T/rpmbuild.log" >&2; die "rpmbuild failed"; }
 cp "$T"/rpm/RPMS/noarch/libre-computer-repos-"$version"-1.noarch.rpm "$out/"
