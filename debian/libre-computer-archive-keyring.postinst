@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+case "$1" in
+	configure)
+		# a board still on deb.libre.computer moves to packages.libre.computer; any other is untouched.
+		# A failure to move leaves the board on its old source and must not fail the keyring's install.
+		/usr/lib/libre-computer-archive-keyring/libre-computer-move ||
+			echo "libre-computer-archive-keyring: could not move this board to packages.libre.computer; it keeps its source" >&2
+		;;
+esac
+#DEBHELPER#
+exit 0

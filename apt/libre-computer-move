@@ -1,0 +1,74 @@
+#!/bin/sh
+# libre-computer-move -- run by libre-computer-archive-keyring's postinst. A board still reading
+# deb.libre.computer (the frozen repo) moves to packages.libre.computer: its apt source is rewritten
+# for its release, the old source files are set aside, and the one-shot rename migration
+# (libre-computer-migrate) is scheduled for when apt is free. A board that cannot move -- a release
+# packages.libre.computer does not serve, or a kernel channel other than lc-lts -- keeps its
+# source and is told why. A board already on packages.libre.computer is left alone.
+#
+# LC_PACKAGES_URI overrides the repository URI (tests only; the signature is checked either way).
+set -eu
+URI=${LC_PACKAGES_URI:-https://packages.libre.computer/deb}
+KEY=/usr/share/keyrings/libre-computer-deb.gpg
+SRC=/etc/apt/sources.list.d/libre-computer.sources
+STATE=/var/lib/libre-computer-archive-keyring
+say() { echo "libre-computer-archive-keyring: $*"; }
+
+# the source files that name the frozen repo
+old=$(grep -lsE '^[^#]*deb\.libre\.computer' /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+	/etc/apt/sources.list.d/*.sources 2>/dev/null || true)
+[ -n "$old" ] || exit 0
+
+. /etc/os-release
+case "${ID:-}:${VERSION_CODENAME:-}" in
+	debian:bookworm|debian:trixie|ubuntu:noble|ubuntu:resolute) suite=$VERSION_CODENAME ;;
+	# Raspbian 12 (armhf) reads Debian 12's suite: every package but the kernel is Architecture: all,
+	# and the armhf kernel is ARMv7, which these boards are
+	raspbian:bookworm) suite=bookworm ;;
+	*)
+		say "this release (${ID:-unknown} ${VERSION_CODENAME:-unknown}) is not served by packages.libre.computer; staying on deb.libre.computer"
+		exit 0
+		;;
+esac
+
+# a kernel channel packages.libre.computer does not carry keeps the board on the frozen repo
+others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 2>/dev/null |
+	awk '$1 == "installed" {print $2}' |
+	grep -E '^linux-image-lc-.+-(arm64|arm|armhf|amd64)$' |
+	grep -vE '^linux-image-lc-lts-(arm64|arm|armhf|amd64)$' || true)
+if [ -n "$others" ]; then
+	say "this board follows a kernel channel packages.libre.computer does not carry ($(echo $others)); staying on deb.libre.computer"
+	exit 0
+fi
+
+mkdir -p "$STATE/moved-sources"
+for f in $old; do
+	if [ "$f" = /etc/apt/sources.list ]; then
+		# a line in the main list: commented out in place, the original kept
+		cp -p "$f" "$STATE/moved-sources/sources.list"
+		sed -i -E 's|^([^#]*deb\.libre\.computer.*)$|# moved to packages.libre.computer: \1|' "$f"
+	else
+		mv "$f" "$STATE/moved-sources/"
+	fi
+done
+cat > "$SRC.new" <<EOF
+Types: deb
+URIs: $URI
+Suites: $suite
+Components: main non-free
+Signed-By: $KEY
+EOF
+mv "$SRC.new" "$SRC"
+touch "$STATE/migrate-pending"
+say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
+
+# the renames need apt, which is busy until this install finishes: a one-shot unit does them
+if [ -d /run/systemd/system ]; then
+	systemctl enable libre-computer-migrate.service >/dev/null 2>&1 || true
+	systemd-run --quiet --no-block --on-active=30 --unit=libre-computer-migrate-now \
+		systemctl start --no-block libre-computer-migrate.service >/dev/null 2>&1 ||
+		say "the renames run on the next boot"
+else
+	systemctl enable libre-computer-migrate.service >/dev/null 2>&1 || true
+	say "the renames run on the next boot"
+fi

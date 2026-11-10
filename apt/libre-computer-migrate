@@ -1,0 +1,62 @@
+#!/bin/sh
+# libre-computer-migrate -- the one-shot after libre-computer-move switched a board to
+# packages.libre.computer: for each package the board has under an old name, install its new name.
+# Each new package Breaks and Replaces the old one, so apt removes the old in the same step; the old
+# names need not be in the repository (package-naming policy rule 6.5). Waits for apt's lock. Run
+# again after a failure (the unit is retried at every boot until it succeeds).
+set -eu
+STATE=/var/lib/libre-computer-archive-keyring
+say() { echo "libre-computer-migrate: $*"; }
+[ -e "$STATE/migrate-pending" ] || exit 0
+
+APT="apt-get -q -y -o DPkg::Lock::Timeout=1800 -o Dpkg::Options::=--force-confold"
+export DEBIAN_FRONTEND=noninteractive
+$APT update
+
+# old name -> new name (the package-naming policy's table)
+pairs="libretech-gpio:libre-computer-gpio
+libretech-dtoverlay:libre-computer-dtoverlay
+libretech-alsa-ucm-conf:alsa-ucm-conf-libre-computer
+xserver-xorg-video-libretech:xserver-xorg-core-libre-computer
+linux-image-lc-lts-arm:linux-image-lc-lts-armhf
+linux-headers-lc-lts-arm:linux-headers-lc-lts-armhf
+libretech-keyring:libre-computer-archive-keyring"
+new=""
+for p in $pairs; do
+	o=${p%%:*} n=${p#*:}
+	if [ "$(dpkg-query -W -f '${db:Status-Status}' "$o" 2>/dev/null || true)" = installed ]; then
+		new="$new $n"
+	fi
+done
+if [ -n "$new" ]; then
+	say "installing$new (in place of their old names)"
+	# shellcheck disable=SC2086
+	$APT install $new
+fi
+# an old name its new one did not displace (a transitional package, which only Depends on the new
+# name) goes once the new name is in
+gone=""
+for p in $pairs; do
+	o=${p%%:*} n=${p#*:}
+	if [ "$(dpkg-query -W -f '${db:Status-Status}' "$o" 2>/dev/null || true)" = installed ] &&
+		[ "$(dpkg-query -W -f '${db:Status-Status}' "$n" 2>/dev/null || true)" = installed ]; then
+		gone="$gone $o"
+	fi
+done
+if [ -n "$gone" ]; then
+	say "removing$gone (their libre-computer names are installed)"
+	# shellcheck disable=SC2086
+	$APT remove $gone
+fi
+left=""
+for p in $pairs; do
+	o=${p%%:*}
+	[ "$(dpkg-query -W -f '${db:Status-Status}' "$o" 2>/dev/null || true)" != installed ] || left="$left $o"
+done
+if [ -n "$left" ]; then
+	say "still installed under an old name:$left; will retry"
+	exit 1
+fi
+rm -f "$STATE/migrate-pending"
+systemctl disable libre-computer-migrate.service >/dev/null 2>&1 || true
+say "done: the board reads packages.libre.computer under the libre-computer names"

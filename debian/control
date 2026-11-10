@@ -1,9 +1,28 @@
-Source: libretech-keyring
+Source: libre-computer-archive-keyring
 Priority: optional
 Section: misc
 Maintainer: Da Xue <da@libre.computer>
-Build-Depends: debhelper (>= 9)
+Build-Depends: debhelper (>= 10)
+
+Package: libre-computer-archive-keyring
+Architecture: all
+Depends: ${misc:Depends}
+Breaks: libretech-keyring (<< ${binary:Version})
+Replaces: libretech-keyring (<< ${binary:Version})
+Description: Libre Computer archive keyring
+ The OpenPGP key that signs packages.libre.computer, at
+ /usr/share/keyrings/libre-computer-deb.gpg (the path every source line names).
+ .
+ On a board still reading deb.libre.computer (the frozen repository) it moves the
+ board's apt source to packages.libre.computer for its release, and once apt is
+ free installs the libre-computer name of every package the board has under an
+ old libretech name. A release packages.libre.computer does not serve, or a
+ kernel channel other than lc-lts, keeps the board where it is.
 
 Package: libretech-keyring
 Architecture: all
-Description: Libre Computer GnuPG keys
+Section: oldlibs
+Depends: libre-computer-archive-keyring (= ${binary:Version}), ${misc:Depends}
+Description: transitional package for libre-computer-archive-keyring
+ The Libre Computer keyring is now libre-computer-archive-keyring. This
+ package pulls it in and can be removed.

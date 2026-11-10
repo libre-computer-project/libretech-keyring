@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+case "$1" in
+	purge)
+		rm -rf /var/lib/libre-computer-archive-keyring
+		;;
+	remove)
+		rm -f /etc/systemd/system/multi-user.target.wants/libre-computer-migrate.service
+		;;
+esac
+#DEBHELPER#
+exit 0

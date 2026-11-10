@@ -4,7 +4,7 @@ dateymd=$(date +%Y.%m.%d)
 commit=$(git rev-parse HEAD)
 dateutc=$(date -Ru)
 cat <<EOF > debian/changelog
-libretech-keyring ($dateymd) linux; urgency=medium
+libre-computer-archive-keyring ($dateymd) linux; urgency=medium
 
   * $commit
 

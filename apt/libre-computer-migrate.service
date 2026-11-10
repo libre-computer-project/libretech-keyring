@@ -1,0 +1,13 @@
+[Unit]
+Description=Move the Libre Computer packages to their libre-computer names (once, after the move to packages.libre.computer)
+ConditionPathExists=/var/lib/libre-computer-archive-keyring/migrate-pending
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/libre-computer-archive-keyring/libre-computer-migrate
+# a failure (no network, a busy apt past the lock timeout) leaves the pending mark: the next boot retries
+
+[Install]
+WantedBy=multi-user.target
