@@ -12,7 +12,12 @@
 #   S2  a release packages.libre.computer does not serve: nothing moves
 #   S3  a board following another kernel channel (lc-lts-testing): nothing moves
 #   S4  a board already on packages.libre.computer: nothing moves, nothing pending
-# Exit 0 iff every check passes.
+#   S5  a board reading a stand-in deb.libre.computer (its only source) that serves the self-contained
+#       libretech-keyring (build-deblibre.sh): a plain `apt-get upgrade` takes it, it moves the board,
+#       and the migration replaces it with libre-computer-archive-keyring
+#   S6  the control for S5: the transitional libretech-keyring (Depends on a package the board lacks)
+#       served the same way is kept back by `apt-get upgrade` -- why deb.libre.computer gets S5's
+# Exit 0 iff every check passes. The debs dir also holds the build-deblibre.sh package.
 
 set -uo pipefail
 img=${1:?usage: sudo ./test-deb-move.sh <image.img> <debs-dir>}
@@ -29,8 +34,9 @@ cleanup() {
 }
 trap 'cleanup; rm -rf "$W"' EXIT
 new_keyring=$(find "$debs" -maxdepth 1 -name 'libre-computer-archive-keyring_*_all.deb' -print -quit)
-trans_keyring=$(find "$debs" -maxdepth 1 -name 'libretech-keyring_*_all.deb' -print -quit)
-[[ -n "$new_keyring" && -n "$trans_keyring" ]] || { echo "no keyring .debs in $debs" >&2; exit 1; }
+trans_keyring=$(find "$debs" -maxdepth 1 -name 'libretech-keyring_*_all.deb' ! -name '*~deb.libre.computer_*' -print -quit)
+deblibre_keyring=$(find "$debs" -maxdepth 1 -name 'libretech-keyring_*~deb.libre.computer_all.deb' -print -quit)
+[[ -n "$new_keyring" && -n "$trans_keyring" && -n "$deblibre_keyring" ]] || { echo "no keyring .debs in $debs" >&2; exit 1; }
 
 # --- the local repository: stand-ins for the new names, signed by a throwaway key -------------------
 G=$W/gnupg
@@ -146,6 +152,66 @@ cp "$mnt/etc/apt/sources.list.d/libre-computer.sources" "$W/s4.before"
 install_keyring
 check "S4: its source is untouched" cmp -s "$W/s4.before" "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 check "S4: nothing pending" test ! -e "$mnt/var/lib/libre-computer-archive-keyring/migrate-pending"
+cleanup
+
+# --- S5 / S6: a stand-in deb.libre.computer serving one libretech-keyring, through `apt-get upgrade` ------
+# deblibre_repo DEB: the frozen repo's `linux` suite with that one package, signed by the throwaway key
+deblibre_repo() {
+	local D=$W/deb.libre.computer/repo
+	rm -rf "$W/deb.libre.computer"
+	mkdir -p "$D/pool" "$D/dists/linux/main/binary-arm64"
+	cp "$1" "$D/pool/"
+	(cd "$D" && apt-ftparchive packages pool > dists/linux/main/binary-arm64/Packages)
+	apt-ftparchive -o APT::FTPArchive::Release::Codename=linux -o APT::FTPArchive::Release::Suite=linux \
+		-o APT::FTPArchive::Release::Components=main -o APT::FTPArchive::Release::Architectures=arm64 \
+		release "$D/dists/linux" > "$W/Release.dl"
+	mv "$W/Release.dl" "$D/dists/linux/Release"
+	gpg --batch --homedir "$G" --clearsign -o "$D/dists/linux/InRelease" "$D/dists/linux/Release"
+}
+# setup_deblibre: an old board whose only source is the stand-in deb.libre.computer (its URI keeps that name,
+# which is what libre-computer-move looks for), trusting the throwaway key at the shipped path
+setup_deblibre() {
+	setup
+	mkdir -p "$mnt/srv/deb.libre.computer"
+	mount --bind "$W/deb.libre.computer" "$mnt/srv/deb.libre.computer"
+	rm -f "$mnt/etc/apt/sources.list.d/debian.sources"
+	echo 'deb [signed-by=/usr/share/keyrings/libre-computer-deb.gpg] file:///srv/deb.libre.computer/repo linux main' \
+		> "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+	cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+	chroot "$mnt" apt-get -q update > "$W/update.log" 2>&1
+}
+upgrade() { # a plain `apt-get upgrade`, as an owner runs it
+	chroot "$mnt" env LC_PACKAGES_URI=file:///srv/test-repo DEBIAN_FRONTEND=noninteractive \
+		apt-get -y -q upgrade > "$W/upgrade.log" 2>&1
+}
+ver() { chroot "$mnt" dpkg-query -W -f '${Version}' "$1" 2>/dev/null; }
+
+echo "== S5: deb.libre.computer serves the self-contained libretech-keyring; the owner runs apt-get upgrade"
+deblibre_repo "$deblibre_keyring"
+setup_deblibre
+before=$(ver libretech-keyring)
+upgrade
+check "S5: apt-get upgrade takes it (libretech-keyring $before -> $(ver libretech-keyring))" bash -c "[[ '$(ver libretech-keyring)' == *~deb.libre.computer ]]"
+check "S5: its install moved the board: packages.libre.computer's source in, deb.libre.computer's set aside" bash -c "grep -qx 'URIs: file:///srv/test-repo' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list'"
+check "S5: the migration is pending" test -e "$mnt/var/lib/libre-computer-archive-keyring/migrate-pending"
+# the package put the real key back; the stand-in repositories are signed by the throwaway one
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/migrate5.log" 2>&1
+check "S5: the migration succeeds" grep -q 'done: the board reads packages.libre.computer' "$W/migrate5.log"
+check "S5: libre-computer-archive-keyring in, libretech-keyring gone" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring && ! installed libretech-keyring"
+for p in libre-computer-gpio libre-computer-dtoverlay; do
+	check "S5: $p installed in place of its old name" bash -c "$(declare -f installed); mnt='$mnt'; installed $p"
+done
+check "S5: the key file stays (it changed owner, not path)" test -s "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+cleanup
+
+echo "== S6 (control): the transitional libretech-keyring served the same way"
+deblibre_repo "$trans_keyring"
+setup_deblibre
+before=$(ver libretech-keyring)
+upgrade
+check "S6: apt-get upgrade keeps it back (it would need a package the board lacks)" bash -c "grep -q 'kept back' '$W/upgrade.log' && [[ '$(ver libretech-keyring)' == '$before' ]]"
+check "S6: so nothing moves" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources'"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"

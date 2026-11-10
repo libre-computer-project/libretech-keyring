@@ -25,7 +25,14 @@ schedules `libre-computer-migrate.service`. Once apt is free that installs the `
 package the board has under its old one (`libretech-gpio` → `libre-computer-gpio`, …, armhf
 `linux-image-lc-lts-arm` → `-armhf`; each new package Breaks and Replaces its old name), retrying at boot until
 it succeeds. Another release, or a kernel channel other than `lc-lts`, keeps the board where it is
-(operator, 2026-11-10). `test-deb-move.sh` (root) proves it in copies of a Debian image against a local
+(operator, 2026-11-10).
+
+**What deb.libre.computer gets**: `build-deblibre.sh` builds a self-contained `libretech-keyring`
+(`<date>~deb.libre.computer`: the key, the move and the migration, no new dependency). `apt-get upgrade` never
+installs a package the board lacks, so a `libretech-keyring` that Depended on `libre-computer-archive-keyring`
+would be kept back there; this one is taken by any upgrade, and its own install moves the board. Its version
+sorts just below the same day's `libre-computer-archive-keyring`, which Breaks/Replaces it once the board reads
+packages.libre.computer. The transitional `libretech-keyring` from `build.sh` is for packages.libre.computer only. `test-deb-move.sh` (root) proves it in copies of a Debian image against a local
 repository signed by a throwaway key.
 
 When the key is renewed or rotated, replace `libre-computer-deb.gpg` with the signer's export of the public
