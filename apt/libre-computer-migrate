@@ -14,6 +14,7 @@
 # reach packages.libre.computer when the keyring was installed (move-pending) is tried again here first.
 set -eu
 STATE=/var/lib/libre-computer-archive-keyring
+failed=0 dpkg_broken=0
 say() { echo "libre-computer-migrate: $*"; }
 [ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || [ -e "$STATE/move-pending" ] || exit 0
 
@@ -22,7 +23,9 @@ export DEBIAN_FRONTEND=noninteractive
 export LC_ALL=C
 # no DPkg::Lock::Timeout: wait_lock waits for every lock (apt's own wait covers dpkg's alone, and would add
 # its timeout to each of wait_lock's retries)
-APT="apt-get -q -y -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
+# no AutomaticRemove: a board that sets it would have every attempt also remove what nothing needs any more,
+# which the removal guard refuses, so no rename would ever go in
+APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 # a stop (shutdown) while apt or dpkg runs: the shell runs this once that command has finished, so dpkg is
@@ -153,21 +156,22 @@ if [ -e "$STATE/move-pending" ]; then
 	/usr/lib/libre-computer-archive-keyring/libre-computer-move || true
 	if [ -e "$STATE/move-pending" ]; then
 		say "packages.libre.computer is still not usable from this board; will retry"
-		exit 1
+		failed=1
 	fi
-	[ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || exit 0
+	[ -e "$STATE/move-pending" ] || [ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || exit 0
 fi
 
 # an install or removal power loss interrupted
 if ! wait_lock dpkg --configure -a --force-confold --force-confdef; then
 	say "dpkg --configure -a failed; will retry:"
 	tail -n 15 "$W/out" | sed 's/^/  /'
-	exit 1
+	failed=1 dpkg_broken=1
 fi
 # the marks as they are now that dpkg is free (an apt run that installed the keyring may have just ended)
 snapshot
 
-if [ -e "$STATE/migrate-pending" ]; then
+# the renames, once the board reads packages.libre.computer and dpkg is sound; the kernel step below runs either way
+if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_broken = 0 ]; then
 	# apt-get update. One failing source of the board's does not stop the migration; packages.libre.computer's
 	# lists must be in
 	# shellcheck disable=SC2086
@@ -274,5 +278,5 @@ if [ -n "$waiting" ]; then
 else
 	rm -f "$STATE/kernel-pending"
 fi
-[ ! -e "$STATE/migrate-pending" ] || exit 1
+[ ! -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $failed = 0 ] || exit 1
 [ -e "$STATE/kernel-pending" ] || systemctl disable libre-computer-migrate.timer >/dev/null 2>&1 || true

@@ -60,6 +60,7 @@ list_awk() { # MODE FILE
 			ntok = split(body, t, /[[:space:]]+/); k = 0
 			for (i = 1; i <= ntok; i++) if (t[i] != "") a[++k] = t[i]
 			type = (k >= 1) ? a[1] : ""; uri = (k >= 2) ? a[2] : ""; dist = (k >= 3) ? a[3] : ""
+			gsub(/"/, "", uri); gsub(/"/, "", dist)
 			entry = (type == "deb" || type == "deb-src") && uri != ""
 			libre = entry && isours(uri)
 			if (entry && mode == "ours" && !commented && libre) c++
@@ -283,9 +284,9 @@ fi
 
 mkdir -p "$STATE/moved-sources"
 stamp=$(date +%Y%m%d%H%M%S)
-backup() { # FILE: the path its original is kept at
-	b=$STATE/moved-sources/$(basename "$1")
-	[ ! -e "$b" ] || b=$b.$stamp
+backup() { # FILE: the path its original is kept at, never one already taken
+	b=$STATE/moved-sources/$(basename "$1") n=0
+	while [ -e "$b" ]; do n=$((n + 1)); b=$STATE/moved-sources/$(basename "$1").$stamp.$n; done
 	echo "$b"
 }
 
@@ -325,9 +326,8 @@ if [ $has_new = 0 ]; then
 	# every source beside the new one. Then nothing has changed yet: the previous file comes back
 	if [ $readable_before = 1 ] && ! apt-get -q indextargets >"$T/after.log" 2>&1; then
 		if [ -n "$src_backup" ]; then cp -p "$src_backup" "$real_src"; else rm -f "$SRC"; fi
-		say "apt cannot read the sources with packages.libre.computer added beside the board's own entry for it; staying on deb.libre.computer. apt said:"
+		say "apt cannot read the sources with packages.libre.computer added beside the board's own entry for it; staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
 		grep -E '^(E|W):' "$T/after.log" | sed 's/^/  /' || true
-		retry_off
 		exit 0
 	fi
 fi

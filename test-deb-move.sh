@@ -638,5 +638,16 @@ install_keyring
 check "S42: no shipped source added beside it, the board moved" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/move-pending'"
 cleanup
 
+echo "== S43: a board whose apt config sets AutomaticRemove, with a package nothing needs: the renames still go in"
+setup
+echo 'APT::Get::AutomaticRemove "true";' > "$mnt/etc/apt/apt.conf.d/99autoremove"
+dummy orphan-pkg
+in_root dpkg -i /tmp/orphan-pkg.deb >/dev/null 2>&1
+in_root apt-mark auto orphan-pkg >/dev/null 2>&1
+install_keyring
+migrate s43.log
+check "S43: the migration succeeds and leaves the orphan alone" bash -c "$(declare -f installed); mnt='$mnt'; grep -q 'done: the board reads' '$W/s43.log' && installed libre-computer-gpio && installed orphan-pkg"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
