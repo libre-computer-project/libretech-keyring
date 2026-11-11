@@ -609,5 +609,22 @@ for f in libre-computer-move libre-computer-migrate; do
 	check "S39: $f exports LC_ALL=C" bash -c "dpkg-deb --fsys-tarfile '$new_keyring' | tar -xO ./usr/lib/libre-computer-archive-keyring/$f | grep -qx 'export LC_ALL=C'"
 done
 
+echo "== S40: a new name the owner already installed by hand stays manual, though its old name was automatic"
+setup
+install_keyring
+in_root apt-mark manual libre-computer-archive-keyring >/dev/null 2>&1
+in_root apt-mark auto libretech-keyring >/dev/null 2>&1
+migrate s40.log
+check "S40: libre-computer-archive-keyring still manual after the rename" bash -c "grep -q 'done: the board reads' '$W/s40.log' && chroot '$mnt' apt-mark showmanual | grep -qx libre-computer-archive-keyring"
+cleanup
+
+echo "== S41: the board's own packages.libre.computer entry carries only non-free: it does not count as a working source"
+setup
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+echo 'deb [signed-by=/usr/share/keyrings/own-copy.gpg] file:///srv/test-repo trixie non-free' > "$mnt/etc/apt/sources.list.d/mine.list"
+install_keyring
+check "S41: stays on deb.libre.computer, the move retried" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/move-pending' && test ! -e '$mnt$S/migrate-pending'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

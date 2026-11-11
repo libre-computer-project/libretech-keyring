@@ -11,15 +11,19 @@
 # no longer cover this one, dpkg refuses their shared files and the migration fails on every board. The
 # script reads that version from packages.libre.computer (or --below) and refuses a version that is not lower.
 #
-#   ./build-deblibre.sh --version YYYY.MM.DD [--below VERSION] [--out DIR]
+#   ./build-deblibre.sh --version YYYY.MM.DD [--below VERSION] [--above VERSION] [--out DIR]
+#
+# --above: the libretech-keyring deb.libre.computer serves now (read from it by default); the version must sort
+# above it, or no board takes it as an upgrade
 set -euo pipefail
 HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
-version="" below="" out=$PWD
-usage() { echo "usage: $0 --version YYYY.MM.DD [--below VERSION] [--out DIR]" >&2; exit 2; }
+version="" below="" above="" out=$PWD
+usage() { echo "usage: $0 --version YYYY.MM.DD [--below VERSION] [--above VERSION] [--out DIR]" >&2; exit 2; }
 while [[ $# -gt 0 ]]; do
 	case $1 in
 		--version) version=$2; shift 2 ;;
 		--below) below=$2; shift 2 ;;
+		--above) above=$2; shift 2 ;;
 		--out) out=$2; shift 2 ;;
 		*) usage ;;
 	esac
@@ -41,6 +45,20 @@ if [[ -z $below ]]; then
 		done
 	done
 fi
+# and above the libretech-keyring deb.libre.computer serves now, or no board would take it as an upgrade
+if [[ -z $above ]]; then
+	for a in arm64 armhf amd64; do
+		v=$(curl -fsSL "https://deb.libre.computer/repo/dists/linux/main/binary-$a/Packages.gz" | gzip -dc |
+			awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}') ||
+			{ echo "could not read deb.libre.computer $a; pass --above" >&2; exit 1; }
+		for x in $v; do
+			[[ -z $above ]] || dpkg --compare-versions "$x" gt "$above" && above=$x
+		done
+	done
+	[[ -n $above ]] || { echo "deb.libre.computer lists no libretech-keyring; pass --above" >&2; exit 1; }
+fi
+dpkg --compare-versions "${version}~deb.libre.computer" gt "$above" ||
+	{ echo "${version}~deb.libre.computer is not above $above (deb.libre.computer's libretech-keyring): no board would upgrade to it" >&2; exit 1; }
 dpkg --compare-versions "${version}~deb.libre.computer" lt "$below" ||
 	{ echo "${version}~deb.libre.computer is not below $below (libre-computer-archive-keyring's lowest version): its Breaks/Replaces would not cover this one" >&2; exit 1; }
 T=$(mktemp -d)

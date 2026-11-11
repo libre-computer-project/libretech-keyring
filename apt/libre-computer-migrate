@@ -92,11 +92,17 @@ safe_apt() {
 	done
 }
 
-# each installed new name of PAIRS gets its old name's mark, read when this run started. A new name pulled in
-# as a dependency of its old (transitional) one is marked automatic; once the old one is removed, autoremove
-# would take it -- the kernel meta-package, or the keyring whose key every Libre Computer source line names
-had=" $(for p in $pairs $kpairs; do o=${p%%:*}; [ "$(st "$o")" != installed ] || printf '%s ' "$o"; done)"
-autos=" $(apt-mark showauto 2>/dev/null | tr '\n' ' ') "
+# each installed new name of PAIRS gets its old name's mark, read once dpkg is free (snapshot(), below). A new
+# name pulled in as a dependency of its old (transitional) one is marked automatic; once the old one is removed,
+# autoremove would take it -- the kernel meta-package, or the keyring whose key every Libre Computer source line
+# names. A new name the owner already had as manual stays manual: only manual is ever copied onto it
+snapshot() {
+	had=" $(for p in $pairs $kpairs; do o=${p%%:*}; [ "$(st "$o")" != installed ] || printf '%s ' "$o"; done)"
+	newmanual=" $(for p in $pairs $kpairs; do n=${p#*:}; [ "$(st "$n")" != installed ] || printf '%s ' "$n"; done)"
+	autos=" $(apt-mark showauto 2>/dev/null | tr '\n' ' ') "
+	for n in $newmanual; do case $autos in *" $n "*) newmanual=$(echo "$newmanual" | sed "s/ $n / /") ;; esac; done
+	newmanual=" $newmanual "
+}
 # unmarked: the old names whose new name's mark could not be set; they are kept (and retried), so autoremove
 # can never take a new name that was left automatic
 unmarked=" "
@@ -109,6 +115,7 @@ keep_mark() {
 		case $had in *" $o "*) ;; *) continue ;; esac
 		[ "$(st "$n")" = installed ] || continue
 		case $autos in *" $o "*) m=auto ;; *) m=manual ;; esac
+		case $newmanual in *" $n "*) m=manual ;; esac
 		if ! wait_lock apt-mark "$m" "$n"; then
 			say "could not mark $n $m; keeping $o for now"
 			unmarked="$unmarked$o "
@@ -145,6 +152,8 @@ if ! wait_lock dpkg --configure -a --force-confold --force-confdef; then
 	tail -n 15 "$W/out" | sed 's/^/  /'
 	exit 1
 fi
+# the marks as they are now that dpkg is free (an apt run that installed the keyring may have just ended)
+snapshot
 
 if [ -e "$STATE/migrate-pending" ]; then
 	# apt-get update. One failing source of the board's does not stop the migration; packages.libre.computer's

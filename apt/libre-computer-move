@@ -157,6 +157,12 @@ case "${ID:-}:${VERSION_CODENAME:-}" in
 esac
 
 # the files with an enabled entry for the frozen repo, and whether the board already reads the new one
+# one move at a time (the timer's run and a dpkg-reconfigure or a keyring upgrade can meet): the second waits,
+# then finds the board moved and has nothing to do
+for d in /run/lock /var/lock /tmp; do [ -d "$d" ] && break; done
+exec 9>"$d/libre-computer-move.lock"
+flock 9
+
 old="" has_new=0 newfiles=""
 for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
 	[ -f "$f" ] || continue
@@ -188,6 +194,7 @@ if [ -n "$others" ]; then
 	exit 0
 fi
 
+ARCH=$(dpkg --print-architecture)
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 chmod 755 "$T"
@@ -206,7 +213,8 @@ if [ $has_new = 0 ]; then
 	stanza "$PROBE_KEY" > "$T/parts/probe.sources"
 	if ! apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/parts" \
 		-o Dir::State::Lists="$T/lists" -o Dir::Cache="$T/cache" update >"$T/probe.log" 2>&1 ||
-		! ls "$T/lists/" 2>/dev/null | grep -q 'InRelease$'; then
+		! ls "$T/lists/" 2>/dev/null | grep -q 'InRelease$' ||
+		! ls "$T/lists/" 2>/dev/null | grep -q "_dists_${suite}_main_binary-${ARCH}_Packages"; then
 		say "packages.libre.computer ($URI) is not usable from this board; staying on deb.libre.computer for now, and trying again every 6 hours (or run 'dpkg-reconfigure $PKG'). apt said:"
 		grep -E '^(E|W|Err):' "$T/probe.log" | sed 's/^/  /' || true
 		# a network or clock fault at upgrade time must not leave the board on the frozen repo for good
@@ -231,8 +239,11 @@ if [ $has_new = 1 ]; then
 	done
 	apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/own" \
 		-o Dir::State::Lists="$T/ownlists" -o Dir::Cache="$T/owncache" update >"$T/own.log" 2>&1 || true
-	want=$(printf '%s' "$URIN" | tr / _)_dists_${suite}_InRelease
-	if ! ls "$T/ownlists/" 2>/dev/null | grep -qF -- "$want"; then
+	# the InRelease, and main for this board's architecture (an entry with only non-free, or for another
+	# architecture, would leave nothing serving the renamed packages)
+	want=$(printf '%s' "$URIN" | tr / _)_dists_${suite}
+	if ! ls "$T/ownlists/" 2>/dev/null | grep -qF -- "${want}_InRelease" ||
+		! ls "$T/ownlists/" 2>/dev/null | grep -qF -- "${want}_main_binary-${ARCH}_Packages"; then
 		say "the board's own entry for packages.libre.computer is not usable (its key, or the network); staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
 		grep -E '^(E|W|Err):' "$T/own.log" | sed 's/^/  /' || true
 		mkdir -p "$STATE"
@@ -303,7 +314,9 @@ for f in $old; do
 		*) [ "$(count other "$f")" -eq 0 ] && whole=1 || whole=0 ;;
 	esac
 	if [ $whole = 1 ]; then
-		mv "$f" "$(backup "$f")"
+		# a symlink: the backup holds the content it named (a relative link would dangle there), and the
+		# link goes; the file it named stays where it is
+		if [ -L "$f" ]; then cp -pL "$f" "$(backup "$f")" && rm -f "$f"; else mv "$f" "$(backup "$f")"; fi
 		continue
 	fi
 	# a file with other entries too: the original kept, ours disabled in place -- in the file itself, or in
