@@ -19,7 +19,7 @@ KEY=/usr/share/keyrings/libre-computer-deb.gpg
 PROBE_KEY=${LC_PACKAGES_KEY:-$KEY}
 # the repository without its scheme and its leading and trailing slashes: an entry naming it over http or https,
 # or as file:/ for file:///, is the same repository to apt; compared whole (.../deb-testing is another one)
-URIN=$(printf '%s' "$URI" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*:##; s#^/+##; s#/+$##')
+URIN=$(printf '%s' "$URI" | tr 'A-Z' 'a-z' | sed -E 's#^[a-z][a-z0-9+.-]*:##; s#^/+##; s#/+$##')
 SRC=/etc/apt/sources.list.d/libre-computer.sources
 STATE=/var/lib/libre-computer-archive-keyring
 PKG=${DPKG_MAINTSCRIPT_PACKAGE:-}
@@ -43,7 +43,13 @@ list_awk() { # MODE FILE
 			split(u, p, "/"); h = p[1]; sub(/^.*@/, "", h); sub(/:.*$/, "", h)
 			return h == "deb.libre.computer" || p[2] == "deb.libre.computer"
 		}
-		function norm(u) { sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u); return u }
+		function norm(u,   p, h, r) {
+			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u)
+			h = u; r = ""
+			if (index(u, "/")) { h = substr(u, 1, index(u, "/") - 1); r = substr(u, index(u, "/")) }
+			sub(/^.*@/, "", h); sub(/:[0-9]+$/, "", h)
+			return h r
+		}
 		# the new repository, directly or through a caching proxy whose path names it first
 		function isnew(u) { u = norm(u); if (u == new) return 1; sub(/^[^\/]*\//, "", u); return u == new }
 		{ sub(/\r$/, "") }
@@ -94,7 +100,13 @@ sources_awk() { # MODE FILE
 			split(u, p, "/"); h = p[1]; sub(/^.*@/, "", h); sub(/:.*$/, "", h)
 			return h == "deb.libre.computer" || p[2] == "deb.libre.computer"
 		}
-		function norm(u) { sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u); return u }
+		function norm(u,   p, h, r) {
+			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u)
+			h = u; r = ""
+			if (index(u, "/")) { h = substr(u, 1, index(u, "/") - 1); r = substr(u, index(u, "/")) }
+			sub(/^.*@/, "", h); sub(/:[0-9]+$/, "", h)
+			return h r
+		}
 		# the new repository, directly or through a caching proxy whose path names it first
 		function isnew(u) { u = norm(u); if (u == new) return 1; sub(/^[^\/]*\//, "", u); return u == new }
 		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd, hn) {
@@ -123,7 +135,7 @@ sources_awk() { # MODE FILE
 			if (mode == "disable") {
 				for (k = 1; k <= n; k++) {
 					if (mine && oth && isuri[k]) continue
-					if (mine && !oth && tolower(line[k]) ~ /^enabled:/) continue
+					if (mine && !oth && tolower(line[k]) ~ /^enabled[[:space:]]*:/) continue
 					print line[k]
 				}
 				if (mine && oth) print "URIs:" keep
@@ -150,11 +162,11 @@ sources_awk() { # MODE FILE
 				if (field == "types") types = types " " $0
 				next
 			}
-			field = l; sub(/:.*/, "", field)
+			field = l; sub(/[[:space:]]*:.*/, "", field)
 			if (field == "uris") { uris = $0; isuri[n] = 1 }
 			if (field == "suites") { suites = $0; sub(/^[^:]*:/, "", suites) }
 			if (field == "types") { types = $0; sub(/^[^:]*:/, "", types) }
-			if (field == "enabled") off = (l ~ /^enabled:[[:space:]]*(no|false|without|off|disable|[+-]?(0[xX])?0+)[[:space:]]*$/)
+			if (field == "enabled") off = (l ~ /^enabled[[:space:]]*:[[:space:]]*(no|false|without|off|disable|[+-]?(0[xX])?0+)[[:space:]]*$/)
 		}
 		END { flush(); if (mode != "disable" && mode != "pick") print c + 0 }
 	' "$2"
@@ -288,7 +300,7 @@ mkdir -p "$STATE/moved-sources"
 stamp=$(date +%Y%m%d%H%M%S)
 backup() { # FILE: the path its original is kept at, never one already taken
 	b=$STATE/moved-sources/$(basename "$1") n=0
-	while [ -e "$b" ]; do n=$((n + 1)); b=$STATE/moved-sources/$(basename "$1").$stamp.$n; done
+	while [ -e "$b" ] || [ -L "$b" ]; do n=$((n + 1)); b=$STATE/moved-sources/$(basename "$1").$stamp.$n; done
 	echo "$b"
 }
 
@@ -349,7 +361,7 @@ fi
 
 # 2. the migration pending and its timer enabled, before the old entries go: an interruption from here
 # leaves both sources (apt reads both) and the migration still runs
-touch "$STATE/migrate-pending"
+touch "$STATE/migrate-pending" "$STATE/moved"
 
 # 3. the deb.libre.computer entries out
 for f in $old; do
@@ -383,7 +395,6 @@ for f in $old; do
 	cat "$T/edited" > "$real.lc-new"
 	mv "$real.lc-new" "$real"
 done
-touch "$STATE/moved"
 retry_off
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
 
