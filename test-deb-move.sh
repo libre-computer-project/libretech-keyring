@@ -240,7 +240,8 @@ cleanup
 S=/var/lib/libre-computer-archive-keyring
 migrate() { # LOG: the throwaway key in place, then the migration
 	cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
-	in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/$1" 2>&1
+	# bounded: a migration that loops fails its checks instead of hanging the test
+	timeout --kill-after=30 900 chroot "$mnt" /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/$1" 2>&1
 }
 dummy() { # NAME [CONTROL-LINE]: a local package built into the chroot's /tmp
 	local d=$W/pkg-$1
@@ -681,6 +682,17 @@ setup_deblibre
 upgrade
 in_root env DEBIAN_FRONTEND=noninteractive dpkg -r libretech-keyring > "$W/s47.log" 2>&1
 check "S47: the timer's link is gone (no rename under way, nothing ships the unit)" bash -c "test ! -e '$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer' && test ! -e '$mnt/usr/lib/systemd/system/libre-computer-migrate.timer'"
+cleanup
+
+echo "== S48: one new name apt cannot install (no candidate): the others go in, the migration ends and retries"
+setup
+mkdir -p "$mnt/etc/apt/preferences.d"
+printf 'Package: libre-computer-gpio\nPin: release *\nPin-Priority: -1\n' > "$mnt/etc/apt/preferences.d/no-gpio"
+install_keyring
+migrate s48.log
+s48rc=$?
+check "S48: the migration ended on its own (not the test's time limit)" test "$s48rc" -lt 124
+check "S48: the others renamed, gpio kept under its old name, the migration pending" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-dtoverlay && ! installed libretech-dtoverlay && installed libretech-gpio && ! installed libre-computer-gpio && test -e '$mnt$S/migrate-pending'"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"

@@ -148,12 +148,13 @@ marked() { for o in "$@"; do case $unmarked in *" $o "*) ;; *) printf ' %s' "$o"
 # install_new NEW...: each attempt may remove only the old names of what it renames (an old name whose new
 # name is in this attempt or already installed), so a fallback install of one name cannot take another
 # pair's old name whose new name never went in
+# (its own names ip/io/in_: sh has no local variables, and the per-name passes call it inside their loop over n)
 install_new() {
 	allow=" "
-	for p in $pairs; do
-		o=${p%%:*} n=${p#*:}
-		case " $* " in *" $n "*) allow="$allow$o " ; continue ;; esac
-		[ "$(st "$n")" != installed ] || allow="$allow$o "
+	for ip in $pairs; do
+		io=${ip%%:*} in_=${ip#*:}
+		case " $* " in *" $in_ "*) allow="$allow$io " ; continue ;; esac
+		[ "$(st "$in_")" != installed ] || allow="$allow$io "
 	done
 	safe_apt install --no-install-recommends "$@"
 }
