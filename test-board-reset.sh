@@ -47,8 +47,10 @@ install -m 0644 "$D/real-key.gpg" "$KEY"
 install -m 0644 "$D/libre-computer-deb.list.orig" "$LIST"
 apt-get "${OURS[@]}" -q update
 # apt safety: the install must remove nothing
-apt-get "${OURS[@]}" -s install "${OLD[@]}" > /tmp/test-board-reset.plan
-! grep -q '^Remv' /tmp/test-board-reset.plan || { grep '^Remv' /tmp/test-board-reset.plan; die "the install would remove packages; stopped"; }
+plan=$(mktemp)
+apt-get "${OURS[@]}" -s install "${OLD[@]}" > "$plan"
+! grep -q '^Remv' "$plan" || { grep '^Remv' "$plan"; rm -f -- "$plan"; die "the install would remove packages; stopped"; }
+rm -f -- "$plan"
 apt-get "${OURS[@]}" -y -q install "${OLD[@]}"
 echo "test-board-reset: done"
 for p in libretech-keyring libretech-gpio libretech-dtoverlay libre-computer-archive-keyring libre-computer-gpio; do
