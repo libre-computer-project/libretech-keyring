@@ -49,6 +49,19 @@ pr() {
 	ps_=$(dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null) || { rc_=$?; [ "$rc_" != 1 ]; return; }
 	printf '%s\n' "$ps_" | grep -qvxE 'not-installed|config-files'
 }
+# never_began OLD NEW: true only if dpkg-query answers for both, OLD present and NEW not installed -- a rename
+# record (pending-NEW) is dropped on nothing less (a failing query keeps it: a record is the one trace of a
+# rename that took the old name and never brought the new one)
+never_began() {
+	os_=$(dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null) || return 1
+	printf '%s\n' "$os_" | grep -qvxE 'not-installed|config-files' || return 1
+	if ns_=$(dpkg-query -W -f '${db:Status-Status}\n' "$2" 2>/dev/null); then
+		! printf '%s\n' "$ns_" | grep -qxE 'installed|triggers-awaited|triggers-pending'
+	else
+		# 1: dpkg does not know it (not installed); anything else: no answer
+		[ $? = 1 ]
+	fi
+}
 # Part-done dpkg work is never this script's to finish, whoever left it (a power loss or a kill in one of its
 # own runs included): proving which part-done package is whose takes a lock dpkg offers no way to hold across a
 # check and an action. While dpkg holds a package part-done, or its journal has entries, the renames wait,
@@ -179,7 +192,8 @@ safe_apt() {
 		fi
 		bad=""
 		# apt plans a removal as Remv, or as Purg where APT::Get::Purge is set
-		for r in $(awk '$1 == "Remv" || $1 == "Purg" {print $2}' "$W/plan"); do
+		# (a foreign architecture's as pkg:arch: compared by name, as $allow holds names)
+		for r in $(awk '$1 == "Remv" || $1 == "Purg" {n = $2; sub(/:.*/, "", n); print n}' "$W/plan"); do
 			case $allow in *" $r "*) ;; *) bad="$bad $r" ;; esac
 		done
 		if [ -n "$bad" ]; then
@@ -320,28 +334,29 @@ keyring_swap() {
 # attempt may remove only the names it was given. (Its own names ro/rprog, as install_new's)
 remove_old() {
 	allow=" $* "
-	# shellcheck disable=SC2086
-	safe_apt remove "$@" && return 0
+	# shellcheck disable=SC2046
+	safe_apt remove $(archs "$@") && return 0
 	rprog=1
 	while [ $rprog = 1 ]; do
 		rprog=0
 		for ro in "$@"; do
 			pr "$ro" || continue
 			allow=" $ro "
-			safe_apt remove "$ro" || true
+			# shellcheck disable=SC2046
+			safe_apt remove $(archs "$ro") || true
 			pr "$ro" || rprog=1
 		done
 	done
 }
-
-# first of all: a rename record whose old name is still here and new one not in is one a stop cut short before
-# that rename's removal (a run renaming several, cut short after some): it began nothing, and goes now, before
-# the owner's own apt runs can make its old name look taken by the rename (the window left is the time from
-# boot to this run)
-for p in $pairs; do
-	o=${p%%:*} n=${p#*:}
-	[ -e "$STATE/pending-$n" ] && [ "$(st "$n")" != installed ] && pr "$o" && rm -f "$STATE/pending-$n" || true
-done
+# archs NAME...: each name as dpkg holds it on the board, every architecture's (pkg for the native one,
+# pkg:arch for another, as apt-get remove needs it); a name dpkg does not answer for, as it is
+archs() {
+	for an in "$@"; do
+		al=$(dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' "$an" 2>/dev/null |
+			awk '$1 != "not-installed" && $1 != "config-files" {print $2}') || al=""
+		[ -n "$al" ] && printf '%s\n' "$al" || echo "$an"
+	done
+}
 
 # the move again, if packages.libre.computer was not usable at the last try (it clears the mark when it moves the
 # board, or when there is nothing to move)
@@ -357,6 +372,14 @@ fi
 # dpkg whole first (no other apt or dpkg running, no journal, nothing part-done but the exception): part-done
 # work is dpkg's owner's to finish, never this script's (see partdone); until it is, the renames wait
 idle
+# a rename record whose old name is still here and new one not in is one a stop cut short before that rename's
+# removal (a run renaming several, cut short after some): it began nothing, and goes now, before the owner's
+# own apt runs can make its old name look taken by the rename (the window left is the time from boot to this
+# run). Only on dpkg's clear answer (never_began), with no other apt or dpkg running (idle above)
+for p in $pairs; do
+	o=${p%%:*} n=${p#*:}
+	[ -e "$STATE/pending-$n" ] && never_began "$o" "$n" && rm -f "$STATE/pending-$n" || true
+done
 # (an old name part-done is let through here: a rename's run may remove it, and each run checks for itself)
 # shellcheck disable=SC2046
 if ! whole $(for p in $pairs $kpairs; do printf '%s ' "${p%%:*}"; done); then
@@ -423,7 +446,7 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 		# no record left to it: one the next run finds is a rename a stop cut short
 		for p in $pairs; do
 			o=${p%%:*} n=${p#*:}
-			[ "$(st "$n")" != installed ] && pr "$o" && rm -f "$STATE/pending-$n" || true
+			[ ! -e "$STATE/pending-$n" ] || ! never_began "$o" "$n" || rm -f "$STATE/pending-$n"
 		done
 		# an old name its new one did not displace (a transitional package, which only Depends on the new name;
 		# the keyring keyring_swap deconfigured) goes once the new name is in, the new name keeping the old mark
