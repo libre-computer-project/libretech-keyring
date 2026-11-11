@@ -15,6 +15,8 @@ set -eu
 URI=${LC_PACKAGES_URI:-https://packages.libre.computer/deb}
 KEY=/usr/share/keyrings/libre-computer-deb.gpg
 PROBE_KEY=${LC_PACKAGES_KEY:-$KEY}
+# the repository with its scheme taken off: an entry naming it over http or https is the same repository to apt
+URIHOST=${URI#*://}
 SRC=/etc/apt/sources.list.d/libre-computer.sources
 STATE=/var/lib/libre-computer-archive-keyring
 PKG=${DPKG_MAINTSCRIPT_PACKAGE:-libre-computer-archive-keyring}
@@ -28,7 +30,7 @@ list_other() {
 	{ grep -sE '^[[:space:]]*#[[:space:]]*deb(-src)?[[:space:]]' "$1"
 		grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -v 'deb\.libre\.computer'; } | grep -c . || true
 }
-list_new() { grep -sE '^[[:space:]]*deb[[:space:]]' "$1" | grep -F "$URI" | grep -cE "[[:space:]]$suite([[:space:]]|\$)" || true; }
+list_new() { grep -sE '^[[:space:]]*deb[[:space:]]' "$1" | grep -F "$URIHOST" | grep -cE "[[:space:]]$suite([[:space:]]|\$)" || true; }
 # deb822 (.sources) stanzas, parsed as apt 3 does: only an empty line ends a stanza (a line of white space
 # continues the field before it; a CRLF file's carriage returns are dropped first, as apt drops them), and Enabled: is false for no / false / without / off / disable / 0 (apt's
 # StringToBool). A stanza's URIs may name several repositories. ours: enabled stanzas naming the frozen repo;
@@ -37,7 +39,7 @@ list_new() { grep -sE '^[[:space:]]*deb[[:space:]]' "$1" | grep -F "$URI" | grep
 # frozen repo is taken out of it counts: the stanza stays a source); disable: the file with the frozen repo taken out of each
 # enabled stanza (the stanza disabled when it named nothing else, its other URIs kept when it did)
 sources_awk() { # MODE FILE
-	awk -v mode="$1" -v new="$URI" -v suite="$suite" '
+	awk -v mode="$1" -v new="$URIHOST" -v suite="$suite" '
 		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd) {
 			if (n == 0) return
 			v = uris; sub(/^[^:]*:/, "", v)
@@ -113,9 +115,9 @@ esac
 old="" has_new=0
 for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
 	[ -f "$f" ] || continue
-	# only a file apt reads: it skips a name with any character outside letters, digits, _ - . (so no name
-	# with a space reaches the loops below)
-	case ${f##*/} in *[!A-Za-z0-9_.-]*) continue ;; esac
+	# only a file apt reads: it skips a name with any character outside letters, digits, _ - . : (so no
+	# name with a space reaches the loops below)
+	case ${f##*/} in *[!A-Za-z0-9_.:-]*) continue ;; esac
 	[ "$(count new "$f")" -eq 0 ] || has_new=1
 	[ "$(count ours "$f")" -gt 0 ] || continue
 	old="$old $f"
@@ -177,9 +179,24 @@ if [ $has_new = 0 ]; then
 		sources_awk disable "$SRC" > "$T/src"
 		stanza "$KEY" >> "$T/src"
 	fi
-	[ ! -e "$SRC" ] || cp -p "$SRC" "$(backup "$SRC")"
+	readable_before=0
+	apt-get -q indextargets >/dev/null 2>&1 && readable_before=1
+	src_backup=""
+	if [ -e "$SRC" ]; then
+		src_backup=$(backup "$SRC")
+		cp -p "$SRC" "$src_backup"
+	fi
 	cat "$T/src" > "$SRC.new"
 	mv "$SRC.new" "$SRC"
+	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
+	# this script does not recognise (another scheme, deb-src only, another Signed-By) can make apt refuse
+	# every source beside the new one. Then nothing has changed yet: the previous file comes back
+	if [ $readable_before = 1 ] && ! apt-get -q indextargets >"$T/after.log" 2>&1; then
+		if [ -n "$src_backup" ]; then cp -p "$src_backup" "$SRC"; else rm -f "$SRC"; fi
+		say "apt cannot read the sources with packages.libre.computer added beside the board's own entry for it; staying on deb.libre.computer. apt said:"
+		grep -E '^(E|W):' "$T/after.log" | sed 's/^/  /' || true
+		exit 0
+	fi
 fi
 
 # 2. the migration pending and its timer enabled, before the old entries go: an interruption from here

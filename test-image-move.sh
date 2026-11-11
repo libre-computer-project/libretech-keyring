@@ -184,6 +184,9 @@ else
 	if [[ " $old " == *" linux-image-lc-lts-arm "* ]] && compgen -G "$P/pool/linux-image-lc-lts-arm_*.deb" >/dev/null; then
 		in_root env DEBIAN_FRONTEND=noninteractive apt-get -y -q --with-new-pkgs upgrade > "$W/6-upgrade.log" 2>&1
 		check "6: the owner's upgrade brings linux-image-lc-lts-armhf through the transitional -arm" bash -c "$(declare -f installed); mnt='$mnt'; installed linux-image-lc-lts-armhf"
+		in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/7-migrate.log" 2>&1
+		check "7: the timer's next run removes linux-image-lc-lts-arm, nothing pending" bash -c "$(declare -f installed); mnt='$mnt'; ! installed linux-image-lc-lts-arm && test ! -e '$state/kernel-pending'"
+		check "7: autoremove keeps linux-image-lc-lts-armhf" bash -c "! chroot '$mnt' apt-get -s autoremove 2>/dev/null | grep -q '^Remv linux-image-lc-lts-armhf '"
 	fi
 	check "5: dpkg --audit says nothing" bash -c "[[ -z \$(chroot '$mnt' dpkg --audit) ]]"
 	result="moved:$expect"

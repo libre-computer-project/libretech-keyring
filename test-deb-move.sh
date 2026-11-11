@@ -494,5 +494,47 @@ install_keyring
 check "S28: the binary source is written" bash -c "grep -qx 'Types: deb' '$mnt/etc/apt/sources.list.d/libre-computer.sources'"
 cleanup
 
+echo "== S12b: the owner's upgrade later brings linux-image-lc-lts-armhf: the next run renames the kernel meta"
+setup
+dummy linux-image-lc-lts-arm
+in_root dpkg -i /tmp/linux-image-lc-lts-arm.deb >/dev/null 2>&1
+install_keyring
+migrate s12b.log
+check "S12b: the userspace renames finish, the kernel waits (kernel-pending)" bash -c "grep -q 'done: the board reads' '$W/s12b.log' && test ! -e '$mnt$S/migrate-pending' && test -e '$mnt$S/kernel-pending'"
+dummy linux-image-lc-lts-armhf
+in_root dpkg -i /tmp/linux-image-lc-lts-armhf.deb >/dev/null 2>&1
+in_root apt-mark auto linux-image-lc-lts-armhf >/dev/null 2>&1
+migrate s12b2.log
+check "S12b: the next run removes linux-image-lc-lts-arm, the new name manual like the old, nothing pending" bash -c "$(declare -f installed); mnt='$mnt'; ! installed linux-image-lc-lts-arm && installed linux-image-lc-lts-armhf && chroot '$mnt' apt-mark showmanual | grep -qx linux-image-lc-lts-armhf && test ! -e '$mnt$S/kernel-pending' && test ! -e '$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer'"
+cleanup
+
+echo "== S29: the board's own packages.libre.computer entry written another way (file:/ for file:///)"
+setup
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+echo 'deb [signed-by=/usr/share/keyrings/own-copy.gpg] file:/srv/test-repo trixie main' > "$mnt/etc/apt/sources.list.d/mine.list"
+install_keyring
+check "S29: it counts as the new source: none written, apt reads everything, the board moved" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && chroot '$mnt' apt-get -q indextargets >/dev/null && test -e '$mnt$S/migrate-pending'"
+cleanup
+
+echo "== S30: a deb-src-only entry for packages.libre.computer under another key: apt would refuse both, so nothing moves"
+setup
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+echo 'deb-src [signed-by=/usr/share/keyrings/own-copy.gpg] file:///srv/test-repo trixie main' > "$mnt/etc/apt/sources.list.d/src.list"
+install_keyring
+if chroot "$mnt" apt-get -q indextargets >/dev/null 2>&1 && grep -q 'apt cannot read the sources' "$W/dpkg.log"; then
+	check "S30: the new source undone, deb.libre.computer kept, nothing pending, apt reads its sources" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt$S/migrate-pending'"
+else
+	# this apt accepts the two side by side: then the move must leave apt reading its sources
+	check "S30: apt reads its sources after the move" in_root apt-get -q indextargets
+fi
+cleanup
+
+echo "== S31: deb.libre.computer in a file whose name has a colon (apt reads it)"
+setup
+mv "$mnt/etc/apt/sources.list.d/libre-computer-deb.list" "$mnt/etc/apt/sources.list.d/lc:old.list"
+install_keyring
+check "S31: the file is set aside, the board moved" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/lc:old.list' && test -e '$mnt$S/migrate-pending' && test -s '$mnt/etc/apt/sources.list.d/libre-computer.sources'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

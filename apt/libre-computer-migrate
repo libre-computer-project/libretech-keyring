@@ -1,27 +1,34 @@
 #!/bin/sh
 # libre-computer-migrate -- the one-shot after libre-computer-move switched a board to
 # packages.libre.computer: for each package the board has under an old name, install its new name.
-# Each new package Breaks and Replaces the old one, so apt removes the old in the same step; the old
-# names need not be in the repository (package-naming policy rule 6.5). Run by
-# libre-computer-migrate.timer until it succeeds.
+# Each new package Breaks, Replaces and Provides the old one, so apt removes the old in the same step; the
+# old names need not be in the repository (package-naming policy rule 6.5). Run by
+# libre-computer-migrate.timer until it is done.
 #
-# It removes nothing but the old names: apt's plan for each step is read first, and a step that would
+# It removes nothing but the old names: apt's plan is read before every attempt, and a step that would
 # remove any other package is refused (the board keeps its packages; the timer tries again later). It
-# installs no kernel: a renamed kernel meta-package (armhf linux-image-lc-lts-arm -> -armhf) follows on
-# the owner's own upgrade, through the transitional package, as every other kernel update does.
+# installs no Recommends and no kernel: a renamed kernel meta-package (armhf linux-image-lc-lts-arm ->
+# -armhf) comes with the owner's own upgrade, through the transitional package; the timer then gives the
+# new name the old one's mark and removes the old one (kernel-pending, checked without apt-get update).
+# A new name takes its old name's manual/automatic mark, so autoremove never takes it.
 set -eu
 STATE=/var/lib/libre-computer-archive-keyring
 say() { echo "libre-computer-migrate: $*"; }
-[ -e "$STATE/migrate-pending" ] || exit 0
+[ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || exit 0
 
 export DEBIAN_FRONTEND=noninteractive
-APT="apt-get -q -y -o DPkg::Lock::Timeout=1800 -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
+# no DPkg::Lock::Timeout: wait_lock waits for every lock (apt's own wait covers dpkg's alone, and would add
+# its timeout to each of wait_lock's retries)
+APT="apt-get -q -y -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
+# a stop (shutdown) while apt or dpkg runs: the shell runs this once that command has finished, so dpkg is
+# never left half-done by us (the unit's KillMode=process signals this script alone)
+trap 'say "stopping after the step that was running"; exit 1' TERM
 st() { dpkg-query -W -f '${db:Status-Status}' "$1" 2>/dev/null || true; }
 
-# old name -> new name (the package-naming policy's table). kpairs: kernel meta-packages, never
-# installed here; their old name goes once the owner's upgrade has put the new one in
+# old name -> new name (the package-naming policy's table). kpairs: kernel meta-packages, never installed
+# here
 pairs="libretech-gpio:libre-computer-gpio
 libretech-dtoverlay:libre-computer-dtoverlay
 libretech-alsa-ucm-conf:alsa-ucm-conf-libre-computer
@@ -34,75 +41,59 @@ olds=" $(for p in $pairs; do printf '%s ' "${p%%:*}"; done)"
 kolds=" $(for p in $kpairs; do printf '%s ' "${p%%:*}"; done)"
 allow=$olds
 
-# run CMD..., waiting while another apt or dpkg holds a lock it needs (up to 2 h: the apt run that installed
-# this package may still be going, with a kernel and its initramfs), output in $W/out
+# is_locked: the output in $W/out says another apt or dpkg holds a lock. apt: "Could not get lock ...";
+# dpkg: "dpkg frontend lock was locked by <program> process with pid N" (older: "by another process"),
+# "dpkg status database is locked by another process"
+is_locked() { grep -qiE 'could not get lock|lock (was|is) locked by|database is locked' "$W/out"; }
+# run CMD..., output in $W/out, retrying every 30 s for up to 2 h while a lock is held (the apt run that
+# installed this package may still be going, with a kernel and its initramfs)
 wait_lock() {
 	i=0
 	while :; do
 		if "$@" >"$W/out" 2>&1; then return 0; fi
-		# apt: "Could not get lock ..."; dpkg: "dpkg frontend lock was locked by <program> process with pid N"
-		# (older: "by another process"), "dpkg status database is locked by another process"
-		if grep -qiE 'could not get lock|lock (was|is) locked by|database is locked' "$W/out" &&
-			[ $i -lt 240 ]; then
+		is_locked && [ $i -lt 240 ] || return 1
+		i=$((i + 1))
+		sleep 30
+	done
+}
+
+# safe_apt ARGS: apt-get ARGS, only if its plan removes nothing but the names in $allow. The plan is read
+# again before every attempt: while a lock is held, another apt may change what this one would do
+safe_apt() {
+	i=0
+	while :; do
+		if ! $APT -s "$@" >"$W/plan" 2>&1; then
+			say "apt cannot plan 'apt-get $*'; will retry:"
+			sed 's/^/  /' "$W/plan" | tail -n 15
+			return 1
+		fi
+		bad=""
+		# apt plans a removal as Remv, or as Purg where APT::Get::Purge is set
+		for r in $(awk '$1 == "Remv" || $1 == "Purg" {print $2}' "$W/plan"); do
+			case $allow in *" $r "*) ;; *) bad="$bad $r" ;; esac
+		done
+		if [ -n "$bad" ]; then
+			say "'apt-get $*' would also remove$bad; not done, nothing changed (will retry)"
+			return 1
+		fi
+		# shellcheck disable=SC2086
+		if $APT "$@" >"$W/out" 2>&1; then cat "$W/out"; return 0; fi
+		if is_locked && [ $i -lt 240 ]; then
 			i=$((i + 1))
 			sleep 30
 			continue
 		fi
+		cat "$W/out"
 		return 1
 	done
 }
 
-# an install or removal power loss interrupted
-if ! wait_lock dpkg --configure -a --force-confold --force-confdef; then
-	say "dpkg --configure -a failed; will retry:"
-	tail -n 15 "$W/out" | sed 's/^/  /'
-	exit 1
-fi
-
-# apt-get update. One failing source of the board's does not stop the migration; packages.libre.computer's
-# lists must be in
-# shellcheck disable=SC2086
-if ! wait_lock $APT update; then
-	say "apt-get update reported errors; going on:"
-	grep -E '^(E|W):' "$W/out" | sed 's/^/  /' || true
-fi
-# a repository's index lists it (an installed copy alone shows only /var/lib/dpkg/status)
-if ! apt-cache policy libre-computer-archive-keyring 2>/dev/null | grep -q ' Packages$'; then
-	say "packages.libre.computer's package lists are not here (no network, or a clock behind the repository's date); will retry"
-	exit 1
-fi
-
-# run apt-get ARGS, only if its plan removes nothing but old names
-safe_apt() {
-	if ! $APT -s "$@" >"$W/plan" 2>&1; then
-		say "apt cannot plan 'apt-get $*'; will retry:"
-		sed 's/^/  /' "$W/plan" | tail -n 15
-		return 1
-	fi
-	bad=""
-	# apt plans a removal as Remv, or as Purg where APT::Get::Purge is set
-	for r in $(awk '$1 == "Remv" || $1 == "Purg" {print $2}' "$W/plan"); do
-		case $allow in *" $r "*) ;; *) bad="$bad $r" ;; esac
-	done
-	if [ -n "$bad" ]; then
-		say "'apt-get $*' would also remove$bad; not done, nothing changed (will retry)"
-		return 1
-	fi
-	# the run itself waits for every lock it needs too: DPkg::Lock::Timeout covers dpkg's, not the download
-	# directory's (/var/cache/apt/archives/lock, held by apt-daily's download just after boot)
-	# shellcheck disable=SC2086
-	if wait_lock $APT "$@"; then cat "$W/out"; return 0; fi
-	cat "$W/out"
-	return 1
-}
-
-# the old names installed when the migration started, and which of them apt had marked automatically
-# installed: each new name takes its old name's mark. A new name pulled in as a dependency of its old
-# (transitional) one is marked automatic; once the old one is removed, autoremove would take it -- the kernel
-# meta-package, or the keyring whose key every Libre Computer source line names
+# each installed new name of PAIRS gets its old name's mark, read when this run started. A new name pulled in
+# as a dependency of its old (transitional) one is marked automatic; once the old one is removed, autoremove
+# would take it -- the kernel meta-package, or the keyring whose key every Libre Computer source line names
 had=" $(for p in $pairs $kpairs; do o=${p%%:*}; [ "$(st "$o")" != installed ] || printf '%s ' "$o"; done)"
 autos=" $(apt-mark showauto 2>/dev/null | tr '\n' ' ') "
-keep_mark() { # PAIRS: each installed new name gets its old name's mark
+keep_mark() {
 	for p in "$@"; do
 		o=${p%%:*} n=${p#*:}
 		case $had in *" $o "*) ;; *) continue ;; esac
@@ -114,54 +105,90 @@ keep_mark() { # PAIRS: each installed new name gets its old name's mark
 	done
 }
 
-new=""
-for p in $pairs; do
-	o=${p%%:*} n=${p#*:}
-	[ "$(st "$o")" != installed ] || [ "$(st "$n")" = installed ] || new="$new $n"
-done
-if [ -n "$new" ]; then
-	say "installing$new (in place of their old names)"
-	# a rename adds nothing the board did not have: not the new packages' Recommends (dtoverlay's i2c-tools,
-	# spi-tools; xorg's xserver-xorg), which an owner may have left out on purpose
-	# all in one step (their dependencies on one another resolve together); if apt refuses that, each on
-	# its own, so one name that cannot go in (held, missing, or removing something else) does not hold back
-	# the others. What stays is retried
+# remove OLD...: together, or each on its own when apt refuses that (one held or refused name keeps only
+# itself)
+remove_old() {
 	# shellcheck disable=SC2086
-	if ! safe_apt install --no-install-recommends $new; then
-		for n in $new; do
-			[ "$(st "$n")" = installed ] || safe_apt install --no-install-recommends "$n" || true
-		done
-	fi
+	safe_apt remove "$@" && return 0
+	for o in "$@"; do
+		[ "$(st "$o")" != installed ] || safe_apt remove "$o" || true
+	done
+}
+
+# an install or removal power loss interrupted
+if ! wait_lock dpkg --configure -a --force-confold --force-confdef; then
+	say "dpkg --configure -a failed; will retry:"
+	tail -n 15 "$W/out" | sed 's/^/  /'
+	exit 1
 fi
-# an old name its new one did not displace (a transitional package, which only Depends on the new
-# name) goes once the new name is in
-gone=""
-for p in $pairs; do
-	o=${p%%:*} n=${p#*:}
-	if [ "$(st "$o")" = installed ] && [ "$(st "$n")" = installed ]; then
-		gone="$gone $o"
-	fi
-done
-# shellcheck disable=SC2086
-keep_mark $pairs
-if [ -n "$gone" ]; then
-	say "removing$gone (their libre-computer names are installed)"
-	# together, or each on its own when apt refuses that: one held or refused name keeps only itself
+
+if [ -e "$STATE/migrate-pending" ]; then
+	# apt-get update. One failing source of the board's does not stop the migration; packages.libre.computer's
+	# lists must be in
 	# shellcheck disable=SC2086
-	if ! safe_apt remove $gone; then
-		for o in $gone; do
-			[ "$(st "$o")" != installed ] || safe_apt remove "$o" || true
-		done
+	if ! wait_lock $APT update; then
+		say "apt-get update reported errors; going on:"
+		grep -E '^(E|W):' "$W/out" | sed 's/^/  /' || true
 	fi
+	# a repository's index lists it (an installed copy alone shows only /var/lib/dpkg/status)
+	if ! apt-cache policy libre-computer-archive-keyring 2>/dev/null | grep -q ' Packages$'; then
+		say "packages.libre.computer's package lists are not here (no network, or a clock behind the repository's date); will retry"
+		exit 1
+	fi
+
+	new=""
+	for p in $pairs; do
+		o=${p%%:*} n=${p#*:}
+		[ "$(st "$o")" != installed ] || [ "$(st "$n")" = installed ] || new="$new $n"
+	done
+	if [ -n "$new" ]; then
+		say "installing$new (in place of their old names)"
+		# a rename adds nothing the board did not have: not the new packages' Recommends (dtoverlay's i2c-tools,
+		# spi-tools; xorg's xserver-xorg), which an owner may have left out on purpose. All in one step (their
+		# dependencies on one another resolve together); if apt refuses that, each on its own, so one name
+		# that cannot go in (held, missing, or removing something else) does not hold back the others
+		# shellcheck disable=SC2086
+		if ! safe_apt install --no-install-recommends $new; then
+			for n in $new; do
+				[ "$(st "$n")" = installed ] || safe_apt install --no-install-recommends "$n" || true
+			done
+		fi
+	fi
+	# an old name its new one did not displace (a transitional package, which only Depends on the new name)
+	# goes once the new name is in, the new name keeping the old one's mark
+	gone=""
+	for p in $pairs; do
+		o=${p%%:*} n=${p#*:}
+		[ "$(st "$o")" != installed ] || [ "$(st "$n")" != installed ] || gone="$gone $o"
+	done
+	# shellcheck disable=SC2086
+	keep_mark $pairs
+	if [ -n "$gone" ]; then
+		say "removing$gone (their libre-computer names are installed)"
+		# shellcheck disable=SC2086
+		remove_old $gone
+	fi
+	left=""
+	for p in $pairs; do
+		o=${p%%:*}
+		[ "$(st "$o")" != installed ] || left="$left $o"
+	done
+	if [ -n "$left" ]; then
+		say "still installed under an old name:$left; will retry"
+		exit 1
+	fi
+	rm -f "$STATE/migrate-pending"
+	say "done: the board reads packages.libre.computer under the libre-computer names"
 fi
-# an old kernel meta-package, once the owner's upgrade has put its new name in. Optional: a refusal keeps
-# it (it is a transitional package that only Depends on the new name) and the migration still finishes
-kgone=""
+
+# the kernel meta-packages: once the owner's upgrade has put a new name in, it takes the old name's mark and
+# the old (transitional) one goes; until then the timer checks again, with no apt-get update. Its removal is
+# optional: a refusal keeps the transitional package, which only Depends on the new name
+waiting="" kgone=""
 for p in $kpairs; do
 	o=${p%%:*} n=${p#*:}
-	if [ "$(st "$o")" = installed ] && [ "$(st "$n")" = installed ]; then
-		kgone="$kgone $o"
-	fi
+	[ "$(st "$o")" = installed ] || continue
+	if [ "$(st "$n")" = installed ]; then kgone="$kgone $o"; else waiting="$waiting $o"; fi
 done
 if [ -n "$kgone" ]; then
 	say "removing$kgone (their new names are installed)"
@@ -169,18 +196,13 @@ if [ -n "$kgone" ]; then
 	keep_mark $kpairs
 	allow=$kolds
 	# shellcheck disable=SC2086
-	safe_apt remove $kgone || say "keeping$kgone"
+	remove_old $kgone
 	allow=$olds
 fi
-left=""
-for p in $pairs; do
-	o=${p%%:*}
-	[ "$(st "$o")" != installed ] || left="$left $o"
-done
-if [ -n "$left" ]; then
-	say "still installed under an old name:$left; will retry"
-	exit 1
+if [ -n "$waiting" ]; then
+	touch "$STATE/kernel-pending"
+	say "the kernel's new names come with your next 'apt upgrade';$waiting stay until then"
+	exit 0
 fi
-rm -f "$STATE/migrate-pending"
+rm -f "$STATE/kernel-pending"
 systemctl disable libre-computer-migrate.timer >/dev/null 2>&1 || true
-say "done: the board reads packages.libre.computer under the libre-computer names"

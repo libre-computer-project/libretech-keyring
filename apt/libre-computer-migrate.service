@@ -1,6 +1,8 @@
 [Unit]
 Description=Move the Libre Computer packages to their libre-computer names (once, after the move to packages.libre.computer)
-ConditionPathExists=/var/lib/libre-computer-archive-keyring/migrate-pending
+# either mark (| makes them alternatives): the renames, or the kernel meta waiting for the owner's upgrade
+ConditionPathExists=|/var/lib/libre-computer-archive-keyring/migrate-pending
+ConditionPathExists=|/var/lib/libre-computer-archive-keyring/kernel-pending
 Wants=network-online.target
 After=network-online.target time-sync.target
 

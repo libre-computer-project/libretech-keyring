@@ -30,7 +30,8 @@ boot and every 6 hours until it succeeds (a timer, so no boot target waits on ap
 `libre-computer-gpio`, …; each new package Breaks, Replaces and Provides its old name) and removes nothing else:
 it reads apt's plan first and refuses a step that would remove any other package. It installs no kernel: the
 armhf meta-package's new name (`linux-image-lc-lts-arm` → `-armhf`) comes with the owner's own upgrade, through
-the transitional package. Another release, a kernel channel other than `lc-lts`, or packages.libre.computer not
+the transitional package, and the timer's next run then removes the old name (each new name keeps its old name's
+manual or automatic mark, so autoremove never takes it). Another release, a kernel channel other than `lc-lts`, or packages.libre.computer not
 answering keeps the board where it is (operator, 2026-11-10).
 
 **What deb.libre.computer gets**: `build-deblibre.sh` builds a self-contained `libretech-keyring`
