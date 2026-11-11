@@ -258,7 +258,8 @@ rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
 # ours names its URI on a continuation line, as deb822 allows
 printf '# a comment\nTypes: deb\nURIs: file:///srv/unused\n https://deb.libre.computer/repo\nSuites: linux\nComponents: main\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n\nTypes: deb\nURIs: file:///srv/other\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/mixed.sources"
 install_keyring
-check "S8: our stanza is disabled in place, the other stanza untouched" bash -c "awk 'BEGIN{RS=\"\"} /deb\\.libre\\.computer/ && /Enabled: no/ {a=1} /srv\\/other/ && !/Enabled:/ {b=1} END{exit !(a&&b)}' '$mnt/etc/apt/sources.list.d/mixed.sources'"
+# the stanza names a second repository too (on its first line): only deb.libre.computer leaves it
+check "S8: deb.libre.computer taken out of its stanza (the other URI kept), the other stanza untouched" bash -c "awk 'BEGIN{RS=\"\"} /srv\\/unused/ && !/deb\\.libre\\.computer/ && !/Enabled:/ {a=1} /srv\\/other/ && !/Enabled:/ {b=1} END{exit !(a&&b)}' '$mnt/etc/apt/sources.list.d/mixed.sources'"
 check "S8: apt reads the edited file" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts=/etc/apt/sources.list.d indextargets
 check "S8: the board moved" test -e "$mnt$S/migrate-pending"
 cleanup
@@ -412,11 +413,14 @@ cleanup
 
 echo "== S21: one rename blocked (its old package held): the others still go through"
 setup
-in_root apt-mark hold libretech-dtoverlay >/dev/null 2>&1
+# a package no other old name depends on (holding libretech-dtoverlay would also pin the libretech-gpio it needs)
+in_root apt-mark hold libretech-alsa-ucm-conf >/dev/null 2>&1
 install_keyring
 migrate s21.log
-check "S21: libre-computer-gpio in, libretech-gpio gone" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-gpio && ! installed libretech-gpio"
-check "S21: the held libretech-dtoverlay stays, the migration pending (retried)" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-dtoverlay && test -e '$mnt$S/migrate-pending'"
+check "S21: the others renamed (gpio, dtoverlay)" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-gpio && ! installed libretech-gpio && installed libre-computer-dtoverlay && ! installed libretech-dtoverlay"
+check "S21: the held libretech-alsa-ucm-conf stays, the migration pending (retried)" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-alsa-ucm-conf && ! installed alsa-ucm-conf-libre-computer && test -e '$mnt$S/migrate-pending'"
+grep -q 'still installed under an old name: libretech-alsa-ucm-conf' "$W/s21.log" ||
+	{ echo "   -- the migration's last lines:"; tail -n 20 "$W/s21.log" | sed 's/^/   | /'; }
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"
