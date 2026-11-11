@@ -218,6 +218,8 @@ check "S5: the migration is pending" test -e "$mnt/var/lib/libre-computer-archiv
 cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/migrate5.log" 2>&1
 check "S5: the migration succeeds" grep -q 'done: the board reads packages.libre.computer' "$W/migrate5.log"
+grep -q 'done: the board reads packages.libre.computer' "$W/migrate5.log" ||
+	{ echo "   -- the migration's last lines:"; tail -n 25 "$W/migrate5.log" | sed 's/^/   | /'; }
 check "S5: libre-computer-archive-keyring in, libretech-keyring gone" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring && ! installed libretech-keyring"
 for p in libre-computer-gpio libre-computer-dtoverlay; do
 	check "S5: $p installed in place of its old name" bash -c "$(declare -f installed); mnt='$mnt'; installed $p"
@@ -548,7 +550,9 @@ cleanup
 
 echo "== S32: a .list line for packages.libre.computer whose trailing comment names deb.libre.computer"
 setup
-echo 'deb [signed-by=/usr/share/keyrings/libre-computer-deb.gpg] file:///srv/test-repo trixie main # was deb.libre.computer' > "$mnt/etc/apt/sources.list.d/mine.list"
+# its own key copy: the shipped path holds the real key, and the local repository is signed by the throwaway one
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+echo 'deb [signed-by=/usr/share/keyrings/own-copy.gpg] file:///srv/test-repo trixie main # was deb.libre.computer' > "$mnt/etc/apt/sources.list.d/mine.list"
 install_keyring
 check "S32: that line is not ours: it stays, active, and the board moves" bash -c "grep -qE '^deb .*srv/test-repo trixie main' '$mnt/etc/apt/sources.list.d/mine.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/migrate-pending' && chroot '$mnt' apt-get -q indextargets >/dev/null"
 cleanup
@@ -591,9 +595,6 @@ echo 'deb [signed-by=/usr/share/keyrings/gone.gpg] file:///srv/test-repo trixie 
 install_keyring
 check "S36: stays on deb.libre.computer, the move retried by the timer" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/move-pending' && test ! -e '$mnt$S/migrate-pending' && grep -q 'own entry for packages.libre.computer is not usable' '$W/dpkg.log'"
 cleanup
-
-echo "== S37: the transitional libretech-keyring Pre-Depends on libre-computer-archive-keyring"
-check "S37: Pre-Depends, so the shared files are taken over before it unpacks" bash -c "dpkg-deb -f '$trans_keyring' Pre-Depends | grep -q '^libre-computer-archive-keyring (= '"
 
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

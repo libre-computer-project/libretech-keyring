@@ -25,10 +25,7 @@ Description: Libre Computer archive keyring
 Package: libretech-keyring
 Architecture: all
 Section: oldlibs
-# Pre-Depends, not Depends: libre-computer-archive-keyring is unpacked first and takes the key, the scripts and
-# the units over (Replaces), so unpacking this package never deletes them, even for a moment
-Pre-Depends: libre-computer-archive-keyring (= ${binary:Version})
-Depends: ${misc:Depends}
+Depends: libre-computer-archive-keyring (= ${binary:Version}), ${misc:Depends}
 Description: transitional package for libre-computer-archive-keyring
  The Libre Computer keyring is now libre-computer-archive-keyring. This
  package pulls it in and can be removed.
