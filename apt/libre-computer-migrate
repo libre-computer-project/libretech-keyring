@@ -29,7 +29,10 @@ xserver-xorg-video-libretech:xserver-xorg-core-libre-computer
 libretech-keyring:libre-computer-archive-keyring"
 kpairs="linux-image-lc-lts-arm:linux-image-lc-lts-armhf
 linux-headers-lc-lts-arm:linux-headers-lc-lts-armhf"
-olds=" $(for p in $pairs $kpairs; do printf '%s ' "${p%%:*}"; done)"
+# what each step may remove: the old names of its own pairs, nothing else
+olds=" $(for p in $pairs; do printf '%s ' "${p%%:*}"; done)"
+kolds=" $(for p in $kpairs; do printf '%s ' "${p%%:*}"; done)"
+allow=$olds
 
 # run CMD..., waiting while another apt or dpkg holds a lock it needs (up to 30 min), output in $W/out
 wait_lock() {
@@ -78,7 +81,7 @@ safe_apt() {
 	bad=""
 	# apt plans a removal as Remv, or as Purg where APT::Get::Purge is set
 	for r in $(awk '$1 == "Remv" || $1 == "Purg" {print $2}' "$W/plan"); do
-		case $olds in *" $r "*) ;; *) bad="$bad $r" ;; esac
+		case $allow in *" $r "*) ;; *) bad="$bad $r" ;; esac
 	done
 	if [ -n "$bad" ]; then
 		say "'apt-get $*' would also remove$bad; not done, nothing changed (will retry)"
@@ -97,8 +100,15 @@ if [ -n "$new" ]; then
 	say "installing$new (in place of their old names)"
 	# a rename adds nothing the board did not have: not the new packages' Recommends (dtoverlay's i2c-tools,
 	# spi-tools; xorg's xserver-xorg), which an owner may have left out on purpose
+	# all in one step (their dependencies on one another resolve together); if apt refuses that, each on
+	# its own, so one name that cannot go in (held, missing, or removing something else) does not hold back
+	# the others. What stays is retried
 	# shellcheck disable=SC2086
-	safe_apt install --no-install-recommends $new || exit 1
+	if ! safe_apt install --no-install-recommends $new; then
+		for n in $new; do
+			[ "$(st "$n")" = installed ] || safe_apt install --no-install-recommends "$n" || true
+		done
+	fi
 fi
 # an old name its new one did not displace (a transitional package, which only Depends on the new
 # name) goes once the new name is in
@@ -112,7 +122,7 @@ done
 if [ -n "$gone" ]; then
 	say "removing$gone (their libre-computer names are installed)"
 	# shellcheck disable=SC2086
-	safe_apt remove $gone || exit 1
+	safe_apt remove $gone || true
 fi
 # an old kernel meta-package, once the owner's upgrade has put its new name in. Optional: a refusal keeps
 # it (it is a transitional package that only Depends on the new name) and the migration still finishes
@@ -125,8 +135,10 @@ for p in $kpairs; do
 done
 if [ -n "$kgone" ]; then
 	say "removing$kgone (their new names are installed)"
+	allow=$kolds
 	# shellcheck disable=SC2086
 	safe_apt remove $kgone || say "keeping$kgone"
+	allow=$olds
 fi
 left=""
 for p in $pairs; do

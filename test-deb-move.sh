@@ -383,5 +383,41 @@ check "S17: the file stays in place, the third-party stanza in it, ours disabled
 check "S17: the board moved" test -s "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 cleanup
 
+echo "== S18: a line of white space inside our stanza (apt 3 reads it as one stanza), beside another"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo\nSuites: linux\n \nComponents: main\n\nTypes: deb\nURIs: file:///srv/other\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/ws.sources"
+install_keyring
+check "S18: the board moved" test -e "$mnt$S/migrate-pending"
+check "S18: apt reads every source after the edit" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null indextargets
+check "S18: our stanza disabled, the other kept" bash -c "awk 'BEGIN{RS=\"\"} /deb\\.libre\\.computer/ && /Enabled: no/ {a=1} /srv\\/other/ && !/Enabled:/ {b=1} END{exit !(a&&b)}' '$mnt/etc/apt/sources.list.d/ws.sources'"
+cleanup
+
+echo "== S19: one stanza naming deb.libre.computer and another repository"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo file:///srv/other\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/both.sources"
+install_keyring
+check "S19: the other repository stays in the stanza, deb.libre.computer leaves it" bash -c "grep -q 'srv/other' '$mnt/etc/apt/sources.list.d/both.sources' && ! grep -v '^#' '$mnt/etc/apt/sources.list.d/both.sources' | grep -q 'deb.libre.computer' && ! grep -q 'Enabled: no' '$mnt/etc/apt/sources.list.d/both.sources'"
+check "S19: the new source is written, apt reads everything" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer.sources' && chroot '$mnt' apt-get -q -o Dir::Etc::sourcelist=/dev/null indextargets"
+cleanup
+
+echo "== S20: a deb822 stanza disabled as Enabled: without"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo\nSuites: linux\nComponents: main\nEnabled: without\n' > "$mnt/etc/apt/sources.list.d/off.sources"
+install_keyring
+check "S20: nothing moves, nothing pending" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt$S/migrate-pending'"
+cleanup
+
+echo "== S21: one rename blocked (its old package held): the others still go through"
+setup
+in_root apt-mark hold libretech-dtoverlay >/dev/null 2>&1
+install_keyring
+migrate s21.log
+check "S21: libre-computer-gpio in, libretech-gpio gone" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-gpio && ! installed libretech-gpio"
+check "S21: the held libretech-dtoverlay stays, the migration pending (retried)" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-dtoverlay && test -e '$mnt$S/migrate-pending'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

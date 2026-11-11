@@ -26,37 +26,54 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 list_ours() { grep -csE '^[[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer' "$1" || true; }
 list_other() { grep -sE '^[[:space:]]*(#[[:space:]]*)?deb(-src)?[[:space:]]' "$1" | grep -cv 'deb\.libre\.computer' || true; }
 list_new() { grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -cF "$URI" || true; }
-# deb822 (.sources) stanzas. A stanza is disabled by Enabled: no / false / off / 0 (apt's boolean). ours:
-# enabled stanzas naming the frozen repo; other: every other stanza with URIs, disabled ones included;
-# new: enabled stanzas naming packages.libre.computer; disable: the file with each stanza of ours disabled
+# deb822 (.sources) stanzas, parsed as apt 3 does: only an empty line ends a stanza (a line of white space
+# continues the field before it), and Enabled: is false for no / false / without / off / disable / 0 (apt's
+# StringToBool). A stanza's URIs may name several repositories. ours: enabled stanzas naming the frozen repo;
+# other: stanzas naming any other repository, or disabled ones naming ours (content that must stay); new:
+# enabled stanzas naming packages.libre.computer; disable: the file with the frozen repo taken out of each
+# enabled stanza (the stanza disabled when it named nothing else, its other URIs kept when it did)
 sources_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URI" '
-		function flush() {
+		function flush(   k, t, ntok, keep, libre, oth, mine) {
 			if (n == 0) return
-			mine = (uris ~ /deb\.libre\.computer/) && !off
+			v = uris; sub(/^[^:]*:/, "", v)
+			ntok = split(v, t, /[[:space:]]+/); keep = ""; libre = 0; oth = 0
+			for (k = 1; k <= ntok; k++) {
+				if (t[k] == "") continue
+				if (t[k] ~ /deb\.libre\.computer/) libre = 1
+				else { oth = 1; keep = keep " " t[k] }
+			}
+			mine = libre && !off
 			if (mode == "ours" && mine) c++
-			if (mode == "other" && !mine && uris != "") c++
-			if (mode == "new" && !off && index(uris, new)) c++
+			if (mode == "other" && (oth || (off && libre))) c++
+			# a stanza that also names the frozen repo was written for its layout (suite linux): not the new source
+			if (mode == "new" && !off && index(v, new) && !libre) c++
 			if (mode == "disable") {
-				for (i = 1; i <= n; i++) {
-					if (mine && tolower(line[i]) ~ /^enabled:/) continue
-					print line[i]
+				for (k = 1; k <= n; k++) {
+					if (mine && oth && isuri[k]) continue
+					if (mine && !oth && tolower(line[k]) ~ /^enabled:/) continue
+					print line[k]
 				}
-				if (mine) print "Enabled: no"
+				if (mine && oth) print "URIs:" keep
+				if (mine && !oth) print "Enabled: no"
 				print ""
 			}
 			n = 0; uris = ""; off = 0; field = ""
+			split("", isuri)
 		}
-		/^[[:space:]]*$/ { flush(); next }
+		/^$/ { flush(); next }
 		/^#/ { line[++n] = $0; next }
 		{
 			line[++n] = $0
 			l = tolower($0)
-			# a field continues on lines that start with white space (URIs: on one line, the URI on the next)
-			if (l ~ /^[[:space:]]/) { if (field == "uris") uris = uris " " $0; next }
+			# a continuation line (white space first): part of the field before it
+			if (l ~ /^[[:space:]]/) {
+				if (field == "uris") { uris = uris " " $0; isuri[n] = 1 }
+				next
+			}
 			field = l; sub(/:.*/, "", field)
-			if (field == "uris") uris = $0
-			if (l ~ /^enabled:[[:space:]]*(no|false|off|0)[[:space:]]*$/) off = 1
+			if (field == "uris") { uris = $0; isuri[n] = 1 }
+			if (l ~ /^enabled:[[:space:]]*(no|false|without|off|disable|0)[[:space:]]*$/) off = 1
 		}
 		END { flush(); if (mode != "disable") print c + 0 }
 	' "$2"

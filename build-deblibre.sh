@@ -26,8 +26,11 @@ while [[ $# -gt 0 ]]; do
 done
 [[ $version =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] || usage
 if [[ -z $below ]]; then
-	below=$(curl -fsSL https://packages.libre.computer/deb/dists/bookworm/main/binary-arm64/Packages.gz | gzip -dc |
-		awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}' | sort -V | tail -n 1) || true
+	# the lowest version any suite and architecture serves: the self-contained package must sort below it in each
+	below=$(for s in bookworm trixie noble resolute; do for a in arm64 armhf amd64; do
+		curl -fsSL "https://packages.libre.computer/deb/dists/$s/main/binary-$a/Packages.gz" | gzip -dc |
+			awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}'
+	done; done | sort -V | head -n 1) || true
 	[[ -n $below ]] || { echo "could not read libretech-keyring's version on packages.libre.computer; pass --below" >&2; exit 1; }
 fi
 dpkg --compare-versions "${version}~deb.libre.computer" lt "$below" ||
