@@ -38,6 +38,8 @@ list_awk() { # MODE FILE
 			return h == "deb.libre.computer" || p[2] == "deb.libre.computer"
 		}
 		function norm(u) { sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u); return u }
+		# the new repository, directly or through a caching proxy whose path names it first
+		function isnew(u) { u = norm(u); if (u == new) return 1; sub(/^[^\/]*\//, "", u); return u == new }
 		{ sub(/\r$/, "") }
 		{
 			raw = $0; body = $0
@@ -52,7 +54,7 @@ list_awk() { # MODE FILE
 			libre = entry && isours(uri)
 			if (entry && mode == "ours" && !commented && libre) c++
 			if (entry && mode == "other" && (commented || !libre)) c++
-			if (entry && mode == "new" && !commented && type == "deb" && norm(uri) == new && dist == suite) c++
+			if (entry && mode == "new" && !commented && type == "deb" && isnew(uri) && dist == suite) c++
 			if (mode == "disable") {
 				if (entry && !commented && libre) print "# moved to packages.libre.computer: " raw
 				else print raw
@@ -78,6 +80,8 @@ sources_awk() { # MODE FILE
 			return h == "deb.libre.computer" || p[2] == "deb.libre.computer"
 		}
 		function norm(u) { sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u); return u }
+		# the new repository, directly or through a caching proxy whose path names it first
+		function isnew(u) { u = norm(u); if (u == new) return 1; sub(/^[^\/]*\//, "", u); return u == new }
 		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd, hn) {
 			if (n == 0) return
 			v = uris; sub(/^[^:]*:/, "", v)
@@ -98,7 +102,7 @@ sources_awk() { # MODE FILE
 			for (k = 1; k <= ntok; k++) if (t[k] == "deb") hd = 1
 			hn = 0
 			ntok = split(v, t, /[[:space:]]+/)
-			for (k = 1; k <= ntok; k++) if (t[k] != "" && norm(t[k]) == new) hn = 1
+			for (k = 1; k <= ntok; k++) if (t[k] != "" && isnew(t[k])) hn = 1
 			if (mode == "new" && !off && hn && hs && hd) c++
 			if (mode == "disable") {
 				for (k = 1; k <= n; k++) {
@@ -197,6 +201,7 @@ fi
 ARCH=$(dpkg --print-architecture)
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
+trap 'exit 1' INT TERM
 chmod 755 "$T"
 stanza() { # KEY: the new source's stanza
 	printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: main non-free\nSigned-By: %s\n' "$URI" "$suite" "$1"
@@ -262,6 +267,11 @@ backup() { # FILE: the path its original is kept at
 	echo "$b"
 }
 
+# a failure from here on (a full disk, a failed copy) is retried by the timer: the mark is set before anything
+# changes and cleared once the move is done
+touch "$STATE/move-pending"
+systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+
 # 1. the new source in place first, so the board never lacks one (a full disk stops here, before anything
 # changed). A board that already reads packages.libre.computer keeps its own entry: a second one with a
 # different Signed-By would make apt refuse every source. libre-computer.sources holding entries of its
@@ -302,8 +312,6 @@ fi
 # 2. the migration pending and its timer enabled, before the old entries go: an interruption from here
 # leaves both sources (apt reads both) and the migration still runs
 touch "$STATE/migrate-pending"
-retry_off
-systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 
 # 3. the deb.libre.computer entries out
 for f in $old; do
@@ -331,6 +339,7 @@ for f in $old; do
 	cat "$T/edited" > "$real.lc-new"
 	mv "$real.lc-new" "$real"
 done
+retry_off
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
 
 # 4. the renames need apt, which is busy until this install finishes: the timer retries until they are

@@ -626,5 +626,16 @@ install_keyring
 check "S41: stays on deb.libre.computer, the move retried" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/move-pending' && test ! -e '$mnt$S/migrate-pending'"
 cleanup
 
+echo "== S42: the board's own packages.libre.computer entry through a caching proxy path counts as its new source"
+setup
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+# a proxy's shape: one leading path component, then the repository's own path
+mkdir -p "$mnt/cache/srv"
+ln -s /srv/test-repo "$mnt/cache/srv/test-repo"
+echo 'deb [signed-by=/usr/share/keyrings/own-copy.gpg] file:///cache/srv/test-repo trixie main' > "$mnt/etc/apt/sources.list.d/mine.list"
+install_keyring
+check "S42: no shipped source added beside it, the board moved" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/move-pending'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

@@ -40,10 +40,8 @@ xserver-xorg-video-libretech:xserver-xorg-core-libre-computer
 libretech-keyring:libre-computer-archive-keyring"
 kpairs="linux-image-lc-lts-arm:linux-image-lc-lts-armhf
 linux-headers-lc-lts-arm:linux-headers-lc-lts-armhf"
-# what each step may remove: the old names of its own pairs, nothing else
-olds=" $(for p in $pairs; do printf '%s ' "${p%%:*}"; done)"
-kolds=" $(for p in $kpairs; do printf '%s ' "${p%%:*}"; done)"
-allow=$olds
+# what an attempt may remove ($allow) is set per attempt (install_new, remove_old)
+allow=" "
 
 # is_locked: the output in $W/out says another apt or dpkg holds a lock. apt: "Could not get lock ...";
 # dpkg: "dpkg frontend lock was locked by <program> process with pid N" (older: "by another process"),
@@ -61,7 +59,7 @@ wait_lock() {
 	done
 }
 
-# safe_apt ARGS: apt-get ARGS, only if its plan removes nothing but the names in $allow. The plan is read
+# safe_apt ARGS: apt-get ARGS, only if its plan removes nothing but the names in $allow (set by the caller). The plan is read
 # again before every attempt: while a lock is held, another apt may change what this one would do
 safe_apt() {
 	i=0
@@ -125,12 +123,26 @@ keep_mark() {
 # OLD... less the unmarked ones
 marked() { for o in "$@"; do case $unmarked in *" $o "*) ;; *) printf '%s ' "$o" ;; esac; done; }
 
+# install_new NEW...: each attempt may remove only the old names of what it renames (an old name whose new
+# name is in this attempt or already installed), so a fallback install of one name cannot take another
+# pair's old name whose new name never went in
+install_new() {
+	allow=" "
+	for p in $pairs; do
+		o=${p%%:*} n=${p#*:}
+		case " $* " in *" $n "*) allow="$allow$o " ; continue ;; esac
+		[ "$(st "$n")" != installed ] || allow="$allow$o "
+	done
+	safe_apt install --no-install-recommends "$@"
+}
 # remove OLD...: together, or each on its own when apt refuses that (one held or refused name keeps only
-# itself)
+# itself); each attempt may remove only the names it was given
 remove_old() {
+	allow=" $* "
 	# shellcheck disable=SC2086
 	safe_apt remove "$@" && return 0
 	for o in "$@"; do
+		allow=" $o "
 		[ "$(st "$o")" != installed ] || safe_apt remove "$o" || true
 	done
 }
@@ -181,9 +193,9 @@ if [ -e "$STATE/migrate-pending" ]; then
 			# dependencies on one another resolve together); if apt refuses that, each on its own, so one name
 			# that cannot go in (held, missing, or removing something else) does not hold back the others
 			# shellcheck disable=SC2086
-			if ! safe_apt install --no-install-recommends $new; then
+			if ! install_new $new; then
 				for n in $new; do
-					[ "$(st "$n")" = installed ] || safe_apt install --no-install-recommends "$n" || true
+					[ "$(st "$n")" = installed ] || install_new "$n" || true
 				done
 			fi
 		fi
@@ -236,16 +248,16 @@ if [ -n "$kgone" ]; then
 	keep_mark $kpairs
 	# shellcheck disable=SC2086
 	kgone=$(marked $kgone)
-	allow=$kolds
 	# shellcheck disable=SC2086
 	[ -z "$kgone" ] || remove_old $kgone
-	allow=$olds
 	# again, now that the removal has had dpkg's lock: an apt that ran alongside is done
 	# shellcheck disable=SC2086
 	keep_mark $kpairs
-	# one kept because its new name's mark could not be set is tried again
-	for o in $kolds; do
-		case $unmarked in *" $o "*) [ "$(st "$o")" != installed ] || waiting="$waiting $o" ;; esac
+	# one still here (its new name's mark could not be set, or its removal failed: a lock held past 2 h, a dpkg
+	# error) is tried again
+	for p in $kpairs; do
+		o=${p%%:*} n=${p#*:}
+		[ "$(st "$o")" != installed ] || [ "$(st "$n")" != installed ] || waiting="$waiting $o"
 	done
 fi
 if [ -n "$waiting" ]; then
