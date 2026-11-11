@@ -37,6 +37,7 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 # entry for packages.libre.computer and the board's suite; disable: the file with ours commented out
 list_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
+		# (a path naming it first -- a caching proxy, or a local mirror of the frozen repo -- counts too)
 		function isours(u,   p, h) {
 			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
 			split(u, p, "/"); h = p[1]; sub(/^.*@/, "", h); sub(/:.*$/, "", h)
@@ -87,6 +88,7 @@ list_awk() { # MODE FILE
 # enabled stanza (the stanza disabled when it named nothing else, its other URIs kept when it did)
 sources_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
+		# (a path naming it first -- a caching proxy, or a local mirror of the frozen repo -- counts too)
 		function isours(u,   p, h) {
 			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
 			split(u, p, "/"); h = p[1]; sub(/^.*@/, "", h); sub(/:.*$/, "", h)
@@ -316,10 +318,12 @@ if [ $has_new = 0 ]; then
 	fi
 	# into the file itself, or the file a symlink names (the link stays a link)
 	real_src=$SRC
-	[ ! -L "$SRC" ] || real_src=$(readlink -f "$SRC")
+	[ ! -L "$SRC" ] || [ ! -e "$SRC" ] || real_src=$(readlink -f "$SRC")
 	# an existing file's mode and owner kept: the new content goes into a copy of it
 	[ ! -e "$real_src" ] || cp -p "$real_src" "$real_src.new"
 	cat "$T/src" > "$real_src.new"
+	# a new file readable to every user (apt as a normal user reads the sources), whatever the umask
+	[ -e "$real_src" ] || chmod 0644 "$real_src.new"
 	mv "$real_src.new" "$real_src"
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
 	# this script does not recognise (another scheme, deb-src only, another Signed-By) can make apt refuse

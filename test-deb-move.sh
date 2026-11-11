@@ -640,13 +640,15 @@ cleanup
 
 echo "== S43: a board whose apt config sets AutomaticRemove, with a package nothing needs: the renames still go in"
 setup
+install_keyring
+# set after the keyring's install: the test's own apt run there would autoremove the orphan itself
 echo 'APT::Get::AutomaticRemove "true";' > "$mnt/etc/apt/apt.conf.d/99autoremove"
 dummy orphan-pkg
 in_root dpkg -i /tmp/orphan-pkg.deb >/dev/null 2>&1
 in_root apt-mark auto orphan-pkg >/dev/null 2>&1
-install_keyring
 migrate s43.log
 check "S43: the migration succeeds and leaves the orphan alone" bash -c "$(declare -f installed); mnt='$mnt'; grep -q 'done: the board reads' '$W/s43.log' && installed libre-computer-gpio && installed orphan-pkg"
+grep -q 'done: the board reads' "$W/s43.log" || { echo "   -- the migration's last lines:"; tail -n 20 "$W/s43.log" | sed 's/^/   | /'; }
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"
