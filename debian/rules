@@ -2,3 +2,9 @@
 
 %:
 	dh $@
+
+# libre-computer-migrate.service installs this package itself: a postinst `start` of the unit waits on the running
+# unit forever, and the `try-restart` dh_systemd_start adds on upgrade even with --no-start stops it mid-apt. So
+# dpkg never starts, restarts or stops the unit; libre-computer-move (the postinst) enables it and arms its
+# one-shot timer.
+override_dh_systemd_start:

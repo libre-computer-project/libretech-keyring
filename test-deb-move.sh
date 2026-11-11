@@ -38,6 +38,12 @@ trans_keyring=$(find "$debs" -maxdepth 1 -name 'libretech-keyring_*_all.deb' ! -
 deblibre_keyring=$(find "$debs" -maxdepth 1 -name 'libretech-keyring_*~deb.libre.computer_all.deb' -print -quit)
 [[ -n "$new_keyring" && -n "$trans_keyring" && -n "$deblibre_keyring" ]] || { echo "no keyring .debs in $debs" >&2; exit 1; }
 
+# the migration unit installs these packages; a maintainer script that starts or restarts it waits on itself
+# (seen on a board: systemctl start libre-computer-migrate.service inside its own apt-get, never returning)
+for k in "$new_keyring" "$deblibre_keyring"; do
+	check "S0: $(basename "$k")'s maintainer scripts never start the migration unit" bash -c "! dpkg-deb --ctrl-tarfile '$k' | tar -xO 2>/dev/null | grep -E '(deb-systemd-invoke|systemctl).*(start|restart).*libre-computer-migrate|_dh_action=(re)?start'"
+done
+
 # --- the local repository: stand-ins for the new names, signed by a throwaway key -------------------
 G=$W/gnupg
 install -d -m 700 "$G"
