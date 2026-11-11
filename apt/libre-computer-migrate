@@ -2,61 +2,122 @@
 # libre-computer-migrate -- the one-shot after libre-computer-move switched a board to
 # packages.libre.computer: for each package the board has under an old name, install its new name.
 # Each new package Breaks and Replaces the old one, so apt removes the old in the same step; the old
-# names need not be in the repository (package-naming policy rule 6.5). Waits for apt's lock. Run
-# again after a failure (the unit is retried at every boot until it succeeds).
+# names need not be in the repository (package-naming policy rule 6.5). Run by
+# libre-computer-migrate.timer until it succeeds.
+#
+# It removes nothing but the old names: apt's plan for each step is read first, and a step that would
+# remove any other package is refused (the board keeps its packages; the timer tries again later). It
+# installs no kernel: a renamed kernel meta-package (armhf linux-image-lc-lts-arm -> -armhf) follows on
+# the owner's own upgrade, through the transitional package, as every other kernel update does.
 set -eu
 STATE=/var/lib/libre-computer-archive-keyring
 say() { echo "libre-computer-migrate: $*"; }
 [ -e "$STATE/migrate-pending" ] || exit 0
 
-APT="apt-get -q -y -o DPkg::Lock::Timeout=1800 -o Dpkg::Options::=--force-confold"
 export DEBIAN_FRONTEND=noninteractive
-$APT update
+APT="apt-get -q -y -o DPkg::Lock::Timeout=1800 -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
+W=$(mktemp -d)
+trap 'rm -rf "$W"' EXIT
+st() { dpkg-query -W -f '${db:Status-Status}' "$1" 2>/dev/null || true; }
 
-# old name -> new name (the package-naming policy's table)
+# old name -> new name (the package-naming policy's table). kpairs: kernel meta-packages, never
+# installed here; their old name goes once the owner's upgrade has put the new one in
 pairs="libretech-gpio:libre-computer-gpio
 libretech-dtoverlay:libre-computer-dtoverlay
 libretech-alsa-ucm-conf:alsa-ucm-conf-libre-computer
 xserver-xorg-video-libretech:xserver-xorg-core-libre-computer
-linux-image-lc-lts-arm:linux-image-lc-lts-armhf
-linux-headers-lc-lts-arm:linux-headers-lc-lts-armhf
 libretech-keyring:libre-computer-archive-keyring"
+kpairs="linux-image-lc-lts-arm:linux-image-lc-lts-armhf
+linux-headers-lc-lts-arm:linux-headers-lc-lts-armhf"
+olds=" $(for p in $pairs $kpairs; do printf '%s ' "${p%%:*}"; done)"
+
+# run CMD..., waiting while another apt or dpkg holds a lock it needs (up to 30 min), output in $W/out
+wait_lock() {
+	i=0
+	while :; do
+		if "$@" >"$W/out" 2>&1; then return 0; fi
+		if grep -qiE 'could not get lock|lock (was|is) locked by another process|database is locked' "$W/out" &&
+			[ $i -lt 60 ]; then
+			i=$((i + 1))
+			sleep 30
+			continue
+		fi
+		return 1
+	done
+}
+
+# an install or removal power loss interrupted
+if ! wait_lock dpkg --configure -a --force-confold --force-confdef; then
+	say "dpkg --configure -a failed; will retry:"
+	tail -n 15 "$W/out" | sed 's/^/  /'
+	exit 1
+fi
+
+# apt-get update. One failing source of the board's does not stop the migration; packages.libre.computer's
+# lists must be in
+# shellcheck disable=SC2086
+if ! wait_lock $APT update; then
+	say "apt-get update reported errors; going on:"
+	grep -E '^(E|W):' "$W/out" | sed 's/^/  /' || true
+fi
+# a repository's index lists it (an installed copy alone shows only /var/lib/dpkg/status)
+if ! apt-cache policy libre-computer-archive-keyring 2>/dev/null | grep -q ' Packages$'; then
+	say "packages.libre.computer's package lists are not here (no network, or a clock behind the repository's date); will retry"
+	exit 1
+fi
+
+# run apt-get ARGS, only if its plan removes nothing but old names
+safe_apt() {
+	if ! $APT -s "$@" >"$W/plan" 2>&1; then
+		say "apt cannot plan 'apt-get $*'; will retry:"
+		sed 's/^/  /' "$W/plan" | tail -n 15
+		return 1
+	fi
+	bad=""
+	for r in $(awk '$1 == "Remv" {print $2}' "$W/plan"); do
+		case $olds in *" $r "*) ;; *) bad="$bad $r" ;; esac
+	done
+	if [ -n "$bad" ]; then
+		say "'apt-get $*' would also remove$bad; not done, nothing changed (will retry)"
+		return 1
+	fi
+	# shellcheck disable=SC2086
+	$APT "$@"
+}
+
 new=""
 for p in $pairs; do
 	o=${p%%:*} n=${p#*:}
-	if [ "$(dpkg-query -W -f '${db:Status-Status}' "$o" 2>/dev/null || true)" = installed ]; then
-		new="$new $n"
-	fi
+	[ "$(st "$o")" != installed ] || [ "$(st "$n")" = installed ] || new="$new $n"
 done
 if [ -n "$new" ]; then
 	say "installing$new (in place of their old names)"
 	# shellcheck disable=SC2086
-	$APT install $new
+	safe_apt install $new || exit 1
 fi
 # an old name its new one did not displace (a transitional package, which only Depends on the new
 # name) goes once the new name is in
 gone=""
-for p in $pairs; do
+for p in $pairs $kpairs; do
 	o=${p%%:*} n=${p#*:}
-	if [ "$(dpkg-query -W -f '${db:Status-Status}' "$o" 2>/dev/null || true)" = installed ] &&
-		[ "$(dpkg-query -W -f '${db:Status-Status}' "$n" 2>/dev/null || true)" = installed ]; then
+	if [ "$(st "$o")" = installed ] && [ "$(st "$n")" = installed ]; then
 		gone="$gone $o"
 	fi
 done
 if [ -n "$gone" ]; then
 	say "removing$gone (their libre-computer names are installed)"
 	# shellcheck disable=SC2086
-	$APT remove $gone
+	safe_apt remove $gone || exit 1
 fi
 left=""
 for p in $pairs; do
 	o=${p%%:*}
-	[ "$(dpkg-query -W -f '${db:Status-Status}' "$o" 2>/dev/null || true)" != installed ] || left="$left $o"
+	[ "$(st "$o")" != installed ] || left="$left $o"
 done
 if [ -n "$left" ]; then
 	say "still installed under an old name:$left; will retry"
 	exit 1
 fi
 rm -f "$STATE/migrate-pending"
-systemctl disable libre-computer-migrate.service >/dev/null 2>&1 || true
+systemctl disable libre-computer-migrate.timer >/dev/null 2>&1 || true
 say "done: the board reads packages.libre.computer under the libre-computer names"

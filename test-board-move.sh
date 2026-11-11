@@ -14,7 +14,7 @@
 #   1  the owner's state: deb.libre.computer's libretech-keyring installed
 #   2  deb.libre.computer's source pointed at the staging copy (what publishing there would serve)
 #   3  apt-get update && apt-get upgrade, restricted to the Libre Computer source (no Debian upgrades on this card)
-#   4  the migration (the one-shot service), watched; its timer is held until the throwaway key is back in place
+#   4  the migration (the one-shot service), watched; held (a runtime mask) until the throwaway key is back in place
 #   5  a real source left behind: packages.libre.computer with the real key, checked by apt-get update
 # Prints PASS/FAIL per check; exit 0 iff every check passes.
 
@@ -51,17 +51,19 @@ check "2: apt reads the staging deb.libre.computer (signature checked)" bash -c 
 
 echo "== 3: the owner's ordinary upgrade"
 before=$(st libretech-keyring)
+# hold the migration: the package puts the real key back, the staging repos need the throwaway one; its timers
+# (the retry timer and the 30 s one) find the service masked until step 4
+systemctl mask --runtime libre-computer-migrate.service >/dev/null 2>&1
 LC_PACKAGES_URI=$S/packages/deb apt-get "${OURS[@]}" -y -q upgrade > "$D/3-upgrade.log" 2>&1
-# hold the migration's timer: the package put the real key back, the staging repos need the throwaway one
-systemctl stop libre-computer-migrate-now.timer 2>/dev/null
 check "3: apt-get upgrade took the self-contained libretech-keyring ($before -> $(st libretech-keyring))" bash -c "dpkg-query -W -f '\${Version}' libretech-keyring | grep -q '~deb.libre.computer\$'"
 check "3: its install moved the board: deb.libre.computer's source set aside, packages.libre.computer's in" bash -c "test ! -e '$LIST' && grep -qx 'URIs: $S/packages/deb' '$SRC' && grep -qx 'Suites: bookworm' '$SRC'"
-check "3: the migration is pending and enabled" bash -c "test -e /var/lib/libre-computer-archive-keyring/migrate-pending && systemctl is-enabled libre-computer-migrate.service"
+check "3: the migration is pending, its retry timer enabled" bash -c "test -e /var/lib/libre-computer-archive-keyring/migrate-pending && systemctl is-enabled libre-computer-migrate.timer"
 grep -h 'libre-computer-archive-keyring:' "$D/3-upgrade.log"
 
 echo "== 4: the migration"
 cp "$D/test-key.gpg" "$KEY"
 t0=$(date +%s)
+systemctl unmask --runtime libre-computer-migrate.service >/dev/null 2>&1
 # bounded: a maintainer script that starts the unit from inside it deadlocks here (seen on a board)
 timeout 900 systemctl start libre-computer-migrate.service
 check "4: the migration unit returned within 900 s" test $? -ne 124
@@ -75,7 +77,7 @@ for p in libretech-keyring libretech-gpio libretech-dtoverlay; do
 	check "4: $p gone" bash -c "[[ \$(dpkg-query -W -f '\${db:Status-Status}' $p 2>/dev/null) != installed ]]"
 done
 check "4: lgpio and ldto still run" bash -c "command -v lgpio && command -v ldto && test -x \$(readlink -f /usr/bin/lgpio) && test -x \$(readlink -f /usr/bin/ldto)"
-check "4: nothing pending, the unit disabled" bash -c "test ! -e /var/lib/libre-computer-archive-keyring/migrate-pending && ! systemctl is-enabled libre-computer-migrate.service"
+check "4: nothing pending, the timer disabled" bash -c "test ! -e /var/lib/libre-computer-archive-keyring/migrate-pending && ! systemctl is-enabled libre-computer-migrate.timer"
 check "4: dpkg --audit says nothing" bash -c "[[ -z \$(dpkg --audit) ]]"
 
 echo "== 5: a real source left behind"

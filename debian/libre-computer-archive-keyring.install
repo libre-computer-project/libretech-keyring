@@ -2,3 +2,4 @@ usr/share/keyrings/libre-computer-deb.gpg
 apt/libre-computer-move usr/lib/libre-computer-archive-keyring/
 apt/libre-computer-migrate usr/lib/libre-computer-archive-keyring/
 apt/libre-computer-migrate.service usr/lib/systemd/system/
+apt/libre-computer-migrate.timer usr/lib/systemd/system/

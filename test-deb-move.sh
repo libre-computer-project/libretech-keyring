@@ -55,8 +55,8 @@ mkdir -p "$R/pool"
 standin() { # NEW OLD
 	local d=$W/pkg-$1
 	mkdir -p "$d/DEBIAN" "$d/usr/share/doc/$1"
-	printf 'Package: %s\nVersion: 2026.11.10\nArchitecture: all\nMaintainer: t <t@invalid>\nBreaks: %s (<< 2026.11.10)\nReplaces: %s (<< 2026.11.10)\nDescription: stand-in for %s\n' \
-		"$1" "$2" "$2" "$1" > "$d/DEBIAN/control"
+	printf 'Package: %s\nVersion: 2026.11.10\nArchitecture: all\nMaintainer: t <t@invalid>\nBreaks: %s (<< 2026.11.10)\nReplaces: %s (<< 2026.11.10)\nProvides: %s (= 2026.11.10)\nDescription: stand-in for %s\n' \
+		"$1" "$2" "$2" "$2" "$1" > "$d/DEBIAN/control"
 	echo "stand-in" > "$d/usr/share/doc/$1/README"
 	dpkg-deb --root-owner-group -b "$d" "$R/pool/$1.deb" >/dev/null
 }
@@ -64,6 +64,7 @@ standin libre-computer-gpio libretech-gpio
 standin libre-computer-dtoverlay libretech-dtoverlay
 standin alsa-ucm-conf-libre-computer libretech-alsa-ucm-conf
 standin xserver-xorg-core-libre-computer xserver-xorg-video-libretech
+standin linux-image-lc-lts-armhf linux-image-lc-lts-arm
 cp "$new_keyring" "$trans_keyring" "$R/pool/"
 for s in trixie; do
 	mkdir -p "$R/dists/$s/main/binary-arm64" "$R/dists/$s/main/binary-all" "$R/dists/$s/non-free/binary-arm64"
@@ -100,7 +101,7 @@ in_root() { chroot "$mnt" "$@"; }
 installed() { [[ "$(chroot "$mnt" dpkg-query -W -f '${db:Status-Status}' "$1" 2>/dev/null)" == installed ]]; }
 install_keyring() { # the two keyring packages, through apt as a board takes them (plain dpkg -i cannot
 	# order the swap: it refuses to unpack the new keyring while the old one is configured)
-	chroot "$mnt" env LC_PACKAGES_URI=file:///srv/test-repo DEBIAN_FRONTEND=noninteractive \
+	chroot "$mnt" env LC_PACKAGES_URI="${LCURI:-file:///srv/test-repo}" DEBIAN_FRONTEND=noninteractive \
 		apt-get -y -q install "/tmp/${new_keyring##*/}" "/tmp/${trans_keyring##*/}" > "$W/dpkg.log" 2>&1 ||
 		{ echo "-- installing the keyring failed:"; tail -n 15 "$W/dpkg.log"; }
 }
@@ -112,7 +113,8 @@ install_keyring
 check "S1: the keyring packages install" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring && installed libretech-keyring"
 check "S1: the source now names the repository, trixie, main non-free, signed by the shipped key path" bash -c "grep -qx 'URIs: file:///srv/test-repo' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Suites: trixie' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Components: main non-free' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Signed-By: /usr/share/keyrings/libre-computer-deb.gpg' '$mnt/etc/apt/sources.list.d/libre-computer.sources'"
 check "S1: deb.libre.computer's source is set aside, read by apt no more" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -s '$mnt/var/lib/libre-computer-archive-keyring/moved-sources/libre-computer-deb.list'"
-check "S1: the migration is pending and enabled for the next boot" bash -c "test -e '$mnt/var/lib/libre-computer-archive-keyring/migrate-pending' && test -L '$mnt/etc/systemd/system/multi-user.target.wants/libre-computer-migrate.service'"
+check "S1: the migration is pending, its retry timer enabled" bash -c "test -e '$mnt/var/lib/libre-computer-archive-keyring/migrate-pending' && test -L '$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer'"
+check "S1: no boot target waits on the migration (the service has no [Install])" bash -c "! grep -q '^\[Install\]' '$mnt/usr/lib/systemd/system/libre-computer-migrate.service' && test ! -e '$mnt/etc/systemd/system/multi-user.target.wants/libre-computer-migrate.service'"
 # the throwaway key in place of the shipped one, for this repository only
 cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/migrate.log" 2>&1
@@ -124,7 +126,7 @@ for p in libretech-gpio libretech-dtoverlay libretech-alsa-ucm-conf xserver-xorg
 	check "S1: $p gone" bash -c "$(declare -f installed); mnt='$mnt'; ! installed $p"
 done
 check "S1: the key file is still in place (it changed package, not path)" test -s "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
-check "S1: nothing pending, the unit disabled" bash -c "test ! -e '$mnt/var/lib/libre-computer-archive-keyring/migrate-pending' && test ! -e '$mnt/etc/systemd/system/multi-user.target.wants/libre-computer-migrate.service'"
+check "S1: nothing pending, the timer disabled" bash -c "test ! -e '$mnt/var/lib/libre-computer-archive-keyring/migrate-pending' && test ! -e '$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer'"
 in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/migrate2.log" 2>&1
 check "S1: a second run does nothing" bash -c "[[ ! -s '$W/migrate2.log' ]]"
 cleanup
@@ -218,6 +220,111 @@ before=$(ver libretech-keyring)
 upgrade
 check "S6: apt-get upgrade keeps it back (it would need a package the board lacks)" bash -c "grep -q 'kept back' '$W/upgrade.log' && [[ '$(ver libretech-keyring)' == '$before' ]]"
 check "S6: so nothing moves" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources'"
+cleanup
+
+# --- the robustness cases (review 2026-11-11) ---------------------------------------------------------
+S=/var/lib/libre-computer-archive-keyring
+migrate() { # LOG: the throwaway key in place, then the migration
+	cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+	in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/$1" 2>&1
+}
+dummy() { # NAME [CONTROL-LINE]: a local package built into the chroot's /tmp
+	local d=$W/pkg-$1
+	rm -rf "$d"; mkdir -p "$d/DEBIAN"
+	printf 'Package: %s\nVersion: 1\nArchitecture: all\nMaintainer: t <t@invalid>\n%bDescription: test package\n' "$1" "${2:+$2\n}" > "$d/DEBIAN/control"
+	dpkg-deb --root-owner-group -b "$d" "$mnt/tmp/$1.deb" >/dev/null
+}
+
+echo "== S7: deb.libre.computer in a .list file that also names another repository"
+setup
+mv "$mnt/etc/apt/sources.list.d/libre-computer-deb.list" "$mnt/etc/apt/sources.list.d/mixed.list"
+echo 'deb file:///srv/test-repo trixie main' >> "$mnt/etc/apt/sources.list.d/mixed.list"
+install_keyring
+check "S7: the file stays, the other line active, ours commented out" bash -c "grep -qx 'deb file:///srv/test-repo trixie main' '$mnt/etc/apt/sources.list.d/mixed.list' && grep -q '^# moved to packages.libre.computer: deb .*deb.libre.computer' '$mnt/etc/apt/sources.list.d/mixed.list'"
+check "S7: the original is kept" grep -q '^deb .*deb.libre.computer' "$mnt$S/moved-sources/mixed.list"
+check "S7: the new source is in" test -s "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+cleanup
+
+echo "== S8: deb822: a stanza of ours beside another in one file; a disabled one alone in another"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo\nSuites: linux\nComponents: main\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n\nTypes: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/mixed.sources"
+install_keyring
+check "S8: our stanza is disabled in place, the other stanza untouched" bash -c "awk 'BEGIN{RS=\"\"} /deb\\.libre\\.computer/ && /Enabled: no/ {a=1} /srv\\/test-repo/ && !/Enabled:/ {b=1} END{exit !(a&&b)}' '$mnt/etc/apt/sources.list.d/mixed.sources'"
+check "S8: apt reads the edited file" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts=/etc/apt/sources.list.d indextargets
+check "S8: the board moved" test -e "$mnt$S/migrate-pending"
+cleanup
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo\nSuites: linux\nComponents: main\nEnabled: no\n' > "$mnt/etc/apt/sources.list.d/off.sources"
+cp "$mnt/etc/apt/sources.list.d/off.sources" "$W/s8.before"
+install_keyring
+check "S8: a disabled deb.libre.computer source: nothing moves, nothing pending" bash -c "cmp -s '$W/s8.before' '$mnt/etc/apt/sources.list.d/off.sources' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt$S/migrate-pending'"
+cleanup
+
+echo "== S9: packages.libre.computer does not answer from the board"
+setup
+LCURI=file:///srv/nowhere install_keyring
+check "S9: the keyring still installs" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring"
+check "S9: stays on deb.libre.computer, and says how to retry" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -q 'did not answer' '$W/dpkg.log' && grep -q dpkg-reconfigure '$W/dpkg.log'"
+check "S9: nothing pending" test ! -e "$mnt$S/migrate-pending"
+cleanup
+
+echo "== S10: the migration removes nothing but old names"
+setup
+dummy user-app 'Depends: libretech-gpio (<< 2026.11.10)'
+in_root dpkg -i /tmp/user-app.deb >/dev/null 2>&1
+install_keyring
+migrate s10.log
+check "S10: a step that would remove user-app is refused" grep -q 'would also remove user-app' "$W/s10.log"
+check "S10: user-app and libretech-gpio still installed, the migration still pending" bash -c "$(declare -f installed); mnt='$mnt'; installed user-app && installed libretech-gpio && test -e '$mnt$S/migrate-pending'"
+in_root dpkg -r user-app >/dev/null 2>&1
+dummy user-app2 'Depends: libretech-gpio'
+in_root dpkg -i /tmp/user-app2.deb >/dev/null 2>&1
+migrate s10b.log
+check "S10: a package depending on an old name keeps it through its Provides" bash -c "$(declare -f installed); mnt='$mnt'; grep -q 'done: the board reads' '$W/s10b.log' && installed user-app2 && installed libre-computer-gpio && ! installed libretech-gpio"
+cleanup
+
+echo "== S11: an interrupted dpkg, a dead third-party source, an apt lock held at the start"
+setup
+install_keyring
+dummy half-done
+in_root dpkg --unpack /tmp/half-done.deb >/dev/null 2>&1
+echo 'deb [trusted=yes] file:///srv/gone ./' > "$mnt/etc/apt/sources.list.d/gone.list"
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+if [[ -x $mnt/usr/bin/python3 ]]; then
+	in_root python3 -c 'import fcntl,time; f=open("/var/lib/dpkg/lock-frontend","w"); fcntl.lockf(f,fcntl.LOCK_EX); time.sleep(45)' &
+	holder=$!
+	sleep 2
+fi
+t0=$SECONDS
+in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s11.log" 2>&1
+[[ -z ${holder:-} ]] || wait "$holder"
+check "S11: the migration succeeds" grep -q 'done: the board reads' "$W/s11.log"
+check "S11: the interrupted package was configured" bash -c "$(declare -f installed); mnt='$mnt'; installed half-done"
+check "S11: the dead source was reported, not fatal" grep -q 'apt-get update reported errors' "$W/s11.log"
+if [[ -n ${holder:-} ]]; then
+	check "S11: it waited for the dpkg lock ($((SECONDS - t0)) s)" test $((SECONDS - t0)) -ge 30
+fi
+unset holder
+cleanup
+
+echo "== S12: armhf's renamed kernel meta-package: never installed by the migration"
+setup
+dummy linux-image-lc-lts-arm
+in_root dpkg -i /tmp/linux-image-lc-lts-arm.deb >/dev/null 2>&1
+install_keyring
+migrate s12.log
+check "S12: the migration succeeds without installing linux-image-lc-lts-armhf" bash -c "$(declare -f installed); mnt='$mnt'; grep -q 'done: the board reads' '$W/s12.log' && ! installed linux-image-lc-lts-armhf && installed linux-image-lc-lts-arm"
+cleanup
+
+echo "== S13: packages.libre.computer's lists missing (no network, a clock behind): retried, nothing changed"
+setup
+install_keyring
+sed -i 's|^URIs: .*|URIs: file:///srv/nowhere|' "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+migrate s13.log
+check "S13: it says why and leaves the migration pending" bash -c "grep -q 'package lists are not here' '$W/s13.log' && test -e '$mnt$S/migrate-pending'"
+check "S13: the old names still installed" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-gpio"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"

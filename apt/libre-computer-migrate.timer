@@ -1,0 +1,13 @@
+[Unit]
+Description=Retry the Libre Computer package renames until they are done
+ConditionPathExists=/var/lib/libre-computer-archive-keyring/migrate-pending
+
+[Timer]
+# a few minutes after boot, when the network is up and the clock (no RTC on most boards) has been set,
+# then every 6 hours on a board that stays up
+OnBootSec=5min
+OnUnitInactiveSec=6h
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

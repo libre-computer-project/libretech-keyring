@@ -1,22 +1,65 @@
 #!/bin/sh
-# libre-computer-move -- run by libre-computer-archive-keyring's postinst. A board still reading
-# deb.libre.computer (the frozen repo) moves to packages.libre.computer: its apt source is rewritten
-# for its release, the old source files are set aside, and the one-shot rename migration
-# (libre-computer-migrate) is scheduled for when apt is free. A board that cannot move -- a release
-# packages.libre.computer does not serve, or a kernel channel other than lc-lts -- keeps its
-# source and is told why. A board already on packages.libre.computer is left alone.
+# libre-computer-move -- run by the keyring package's postinst. A board still reading deb.libre.computer
+# (the frozen repo) moves to packages.libre.computer: a source for its release is written, the
+# deb.libre.computer entries are taken out of apt's sources (a file holding only them is set aside, an
+# entry in a file with others is disabled in place, the original kept), and the one-shot rename
+# migration (libre-computer-migrate) is scheduled for when apt is free. A board that cannot move -- a
+# release packages.libre.computer does not serve, a kernel channel other than lc-lts, or
+# packages.libre.computer not answering from here -- keeps its source and is told why. A board already
+# on packages.libre.computer, or whose deb.libre.computer entries are all disabled, is left alone.
 #
-# LC_PACKAGES_URI overrides the repository URI (tests only; the signature is checked either way).
+# LC_PACKAGES_URI overrides the repository URI (tests only; apt checks the signature either way).
 set -eu
 URI=${LC_PACKAGES_URI:-https://packages.libre.computer/deb}
 KEY=/usr/share/keyrings/libre-computer-deb.gpg
 SRC=/etc/apt/sources.list.d/libre-computer.sources
 STATE=/var/lib/libre-computer-archive-keyring
+PKG=${DPKG_MAINTSCRIPT_PACKAGE:-libre-computer-archive-keyring}
 say() { echo "libre-computer-archive-keyring: $*"; }
 
-# the source files that name the frozen repo
-old=$(grep -lsE '^[^#]*deb\.libre\.computer' /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
-	/etc/apt/sources.list.d/*.sources 2>/dev/null || true)
+# one-line (.list) entries: active lines naming the frozen repo, and active lines naming anything else
+list_ours() { grep -csE '^[[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer' "$1" || true; }
+list_other() { grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -cv 'deb\.libre\.computer' || true; }
+# deb822 (.sources) stanzas, skipping one with Enabled: no. `ours` / `other` count the enabled stanzas
+# naming / not naming the frozen repo; `disable` prints the file with each enabled stanza of ours disabled
+sources_awk() { # MODE FILE
+	awk -v mode="$1" '
+		function flush() {
+			if (n == 0) return
+			mine = (uris ~ /deb\.libre\.computer/) && !off
+			if (mode == "ours" && mine) c++
+			if (mode == "other" && !mine && !off && uris != "") c++
+			if (mode == "disable") {
+				for (i = 1; i <= n; i++) {
+					if (mine && tolower(line[i]) ~ /^enabled:/) continue
+					print line[i]
+				}
+				if (mine) print "Enabled: no"
+				print ""
+			}
+			n = 0; uris = ""; off = 0
+		}
+		/^[[:space:]]*$/ { flush(); next }
+		{
+			line[++n] = $0
+			l = tolower($0)
+			if (l ~ /^uris:/) uris = $0
+			if (l ~ /^enabled:[[:space:]]*no[[:space:]]*$/) off = 1
+		}
+		END { flush(); if (mode != "disable") print c + 0 }
+	' "$2"
+}
+
+# the files with an enabled entry for the frozen repo
+old=""
+for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+	[ -f "$f" ] || continue
+	case $f in
+		*.sources) [ "$(sources_awk ours "$f")" -gt 0 ] || continue ;;
+		*) [ "$(list_ours "$f")" -gt 0 ] || continue ;;
+	esac
+	old="$old $f"
+done
 [ -n "$old" ] || exit 0
 
 . /etc/os-release
@@ -41,16 +84,19 @@ if [ -n "$others" ]; then
 	exit 0
 fi
 
+# packages.libre.computer must answer from here (a proxy or an egress allowlist can admit only the old
+# host). apt's own downloader, so apt's proxy settings apply; apt checks the signature at its update
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+chmod 755 "$T"
+if ! /usr/lib/apt/apt-helper download-file "$URI/dists/$suite/InRelease" "$T/InRelease" >"$T/log" 2>&1 ||
+	! head -n 1 "$T/InRelease" 2>/dev/null | grep -q '^-----BEGIN PGP SIGNED MESSAGE-----'; then
+	say "packages.libre.computer ($URI) did not answer from this board; staying on deb.libre.computer. Run 'dpkg-reconfigure $PKG' to try again"
+	exit 0
+fi
+
+# the new source first: a board never lacks one (a full disk stops here, before anything moved)
 mkdir -p "$STATE/moved-sources"
-for f in $old; do
-	if [ "$f" = /etc/apt/sources.list ]; then
-		# a line in the main list: commented out in place, the original kept
-		cp -p "$f" "$STATE/moved-sources/sources.list"
-		sed -i -E 's|^([^#]*deb\.libre\.computer.*)$|# moved to packages.libre.computer: \1|' "$f"
-	else
-		mv "$f" "$STATE/moved-sources/"
-	fi
-done
 cat > "$SRC.new" <<EOF
 Types: deb
 URIs: $URI
@@ -58,17 +104,38 @@ Suites: $suite
 Components: main non-free
 Signed-By: $KEY
 EOF
+stamp=$(date +%Y%m%d%H%M%S)
+for f in $old; do
+	b=$STATE/moved-sources/$(basename "$f")
+	[ ! -e "$b" ] || b=$b.$stamp
+	case $f in
+		*.sources) [ "$(sources_awk other "$f")" -eq 0 ] && whole=1 || whole=0 ;;
+		/etc/apt/sources.list) whole=0 ;;
+		*) [ "$(list_other "$f")" -eq 0 ] && whole=1 || whole=0 ;;
+	esac
+	if [ $whole = 1 ] && [ "$f" != "$SRC" ]; then
+		mv "$f" "$b"
+		continue
+	fi
+	# a file with other entries too: the original kept, ours disabled in place
+	cp -p "$f" "$b"
+	case $f in
+		*.sources) sources_awk disable "$f" > "$f.lc-new" && cat "$f.lc-new" > "$f" && rm -f "$f.lc-new" ;;
+		*) sed -i -E 's|^([[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer.*)$|# moved to packages.libre.computer: \1|' "$f" ;;
+	esac
+done
 mv "$SRC.new" "$SRC"
 touch "$STATE/migrate-pending"
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
 
-# the renames need apt, which is busy until this install finishes: a one-shot unit does them
+# the renames need apt, which is busy until this install finishes: a timer runs the one-shot after it
+# and retries until it succeeds; a transient timer starts it 30 s from now
+systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 if [ -d /run/systemd/system ]; then
-	systemctl enable libre-computer-migrate.service >/dev/null 2>&1 || true
-	systemd-run --quiet --no-block --on-active=30 --unit=libre-computer-migrate-now \
+	systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
+	systemd-run --quiet --no-block --on-active=30 --unit="libre-computer-migrate-now-$stamp" \
 		systemctl start --no-block libre-computer-migrate.service >/dev/null 2>&1 ||
-		say "the renames run on the next boot"
+		say "the renames run within minutes of the next boot"
 else
-	systemctl enable libre-computer-migrate.service >/dev/null 2>&1 || true
-	say "the renames run on the next boot"
+	say "the renames run within minutes of the next boot"
 fi

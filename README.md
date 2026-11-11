@@ -18,21 +18,27 @@ the pacman package cannot (pacman has no `conf.d`), so on install it prints the 
 `bsdtar` and `gpg`.
 
 **Moving a board off deb.libre.computer.** `libre-computer-archive-keyring`'s postinst runs
-`apt/libre-computer-move`: on a board whose apt sources name deb.libre.computer it writes
-`/etc/apt/sources.list.d/libre-computer.sources` for the board's release (Debian 12 / 13, Ubuntu 24.04 / 26.04,
-Raspbian 12 onto `bookworm`), sets the old source files aside in `/var/lib/libre-computer-archive-keyring/`, and
-schedules `libre-computer-migrate.service`. Once apt is free that installs the `libre-computer` name of every
-package the board has under its old one (`libretech-gpio` → `libre-computer-gpio`, …, armhf
-`linux-image-lc-lts-arm` → `-armhf`; each new package Breaks and Replaces its old name), retrying at boot until
-it succeeds. Another release, or a kernel channel other than `lc-lts`, keeps the board where it is
-(operator, 2026-11-10).
+`apt/libre-computer-move`: on a board with an enabled apt entry for deb.libre.computer, once
+packages.libre.computer answers from the board, it writes `/etc/apt/sources.list.d/libre-computer.sources` for
+the board's release (Debian 12 / 13, Ubuntu 24.04 / 26.04, Raspbian 12 onto `bookworm`) and then takes the old
+entries out: a file holding only them goes to `/var/lib/libre-computer-archive-keyring/moved-sources/`, an entry
+in a file with others is disabled in place (the original kept there too). It enables
+`libre-computer-migrate.timer`, which runs `libre-computer-migrate.service` 30 s later, a few minutes after each
+boot and every 6 hours until it succeeds (a timer, so no boot target waits on apt). That installs the
+`libre-computer` name of every package the board has under its old one (`libretech-gpio` →
+`libre-computer-gpio`, …; each new package Breaks, Replaces and Provides its old name) and removes nothing else:
+it reads apt's plan first and refuses a step that would remove any other package. It installs no kernel: the
+armhf meta-package's new name (`linux-image-lc-lts-arm` → `-armhf`) comes with the owner's own upgrade, through
+the transitional package. Another release, a kernel channel other than `lc-lts`, or packages.libre.computer not
+answering keeps the board where it is (operator, 2026-11-10).
 
 **What deb.libre.computer gets**: `build-deblibre.sh` builds a self-contained `libretech-keyring`
 (`<date>~deb.libre.computer`: the key, the move and the migration, no new dependency). `apt-get upgrade` never
 installs a package the board lacks, so a `libretech-keyring` that Depended on `libre-computer-archive-keyring`
 would be kept back there; this one is taken by any upgrade, and its own install moves the board. Its version
-sorts just below the same day's `libre-computer-archive-keyring`, which Breaks/Replaces it once the board reads
-packages.libre.computer. The transitional `libretech-keyring` from `build.sh` is for packages.libre.computer only. `test-deb-move.sh` (root) proves it in copies of a Debian image against a local
+must sort below the transitional `libretech-keyring` on packages.libre.computer, below which
+`libre-computer-archive-keyring` Breaks/Replaces it; `build-deblibre.sh --version` reads that version and refuses
+one that is not lower. The transitional `libretech-keyring` from `build.sh` is for packages.libre.computer only. `test-deb-move.sh` (root) proves it in copies of a Debian image against a local
 repository signed by a throwaway key.
 
 When the key is renewed or rotated, replace `libre-computer-deb.gpg` with the signer's export of the public

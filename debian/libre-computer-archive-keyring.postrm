@@ -5,7 +5,11 @@ case "$1" in
 		rm -rf /var/lib/libre-computer-archive-keyring
 		;;
 	remove)
-		rm -f /etc/systemd/system/multi-user.target.wants/libre-computer-migrate.service
+		# the timer libre-computer-move enabled, unless another package still ships it (the keyring's
+		# other name takes the unit over in a rename: its retries must survive this removal)
+		if [ ! -e /usr/lib/systemd/system/libre-computer-migrate.timer ]; then
+			rm -f /etc/systemd/system/timers.target.wants/libre-computer-migrate.timer
+		fi
 		;;
 esac
 #DEBHELPER#
