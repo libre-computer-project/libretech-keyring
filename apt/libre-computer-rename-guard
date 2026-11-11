@@ -26,12 +26,13 @@ if [ -n "$bad" ]; then
 	echo "libre-computer-rename-guard: this run would also remove$bad; refusing (nothing changed)" >&2
 	exit 1
 fi
-# and no package someone else left part-done (unpacked, half-installed, half-configured, awaiting triggers):
+# and no package someone else left part-done (unpacked, half-installed, half-configured; one only awaiting
+# triggers is not: dpkg processes triggers in any configure run, deciding nothing):
 # apt's closing dpkg --configure --pending would configure it. LC_RENAME_OURS: the names the migration counts as
 # its own (space-separated); without it, every part-done package refuses the run
 others=$(dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' 2>/dev/null |
 	awk -v ours=" ${LC_RENAME_OURS:-} " '
-		$1 == "installed" || $1 == "not-installed" || $1 == "config-files" { next }
+		$1 != "unpacked" && $1 != "half-installed" && $1 != "half-configured" { next }
 		{ n = $2; sub(/:.*/, "", n); if (index(ours, " " n " ") == 0) printf " %s", $2 }')
 if [ -n "$others" ]; then
 	echo "libre-computer-rename-guard: dpkg holds packages part-done that are not the migration's:$others; refusing (nothing changed)" >&2

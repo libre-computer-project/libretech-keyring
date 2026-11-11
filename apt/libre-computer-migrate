@@ -42,9 +42,10 @@ st() { ! dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx in
 # pr PACKAGE: true if any architecture of it is on the board in any state but removed (installed, or left
 # unpacked, half-configured -- as an old keyring deconfigured by keyring_swap is)
 pr() { dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null | grep -qvxE 'not-installed|config-files'; }
-# "unfinished" ($STATE/unfinished, one name a line): every package a run of this script's that changes dpkg's
-# state was about to touch, written before the run (run_begin). What of these a power loss, a kill or a dpkg
-# error left part-done is ours to finish, and only that; the list goes once none of it is part-done
+# "unfinished" ($STATE/unfinished, one name a line): the packages a run of this script's that changes dpkg's
+# state left part-done. run_begin writes every package the run is about to touch, before it starts; run_end
+# (and the next run's start, after a power loss or a kill) keeps only those dpkg holds part-done, so the list
+# never names a package of the board's that is whole. What it names is ours to finish, and only that
 listed() { [ ! -s "$STATE/unfinished" ] || tr '\n' ' ' < "$STATE/unfinished"; }
 # ours: " NAME ..." -- the renames' own old and new names, and the listed ones
 ours() {
@@ -52,17 +53,20 @@ ours() {
 	for p in $pairs $kpairs; do printf '%s %s ' "${p%%:*}" "${p#*:}"; done
 	listed
 }
-# partdone others | listed: " NAME..." of the packages dpkg holds part-done (unpacked, half-installed,
-# half-configured, awaiting triggers): others -- not ours (someone else's, the owner's to finish); listed --
-# listed and not an old name (an old name part-done, as the keyring keyring_swap deconfigures, is on its way
-# out, not to be configured)
+# partdone others | listed | kept: " NAME..." of the packages dpkg holds part-done (unpacked, half-installed,
+# half-configured): others -- not ours (someone else's, the owner's to finish); listed -- listed and not an old
+# name (an old name part-done, as the keyring keyring_swap deconfigures, is on its way out, not to be
+# configured); kept -- listed, old or not. A package only awaiting triggers (triggers-pending, -awaited) is not
+# part-done: dpkg processes its triggers in any configure run, as apt's closing one, and nothing is decided
+# there; a power loss before that closing run leaves such packages, never on the list
 partdone() {
 	dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' 2>/dev/null |
 		awk -v ours="$(ours)" -v listed=" $(listed) " -v old=" $(for p in $pairs $kpairs; do printf '%s ' "${p%%:*}"; done)" -v mode="$1" '
-			$1 == "installed" || $1 == "not-installed" || $1 == "config-files" { next }
+			$1 != "unpacked" && $1 != "half-installed" && $1 != "half-configured" { next }
 			{
 				n = $2; sub(/:.*/, "", n); k = " " n " "
 				if (mode == "others") { if (index(ours, k) == 0) printf " %s", $2 }
+				else if (mode == "kept") { if (index(listed, k) > 0) printf " %s", $2 }
 				else if (index(listed, k) > 0 && index(old, k) == 0) printf " %s", $2
 			}'
 }
@@ -113,7 +117,18 @@ run_begin() {
 	bst=$(sed 's/.*) //' "/proc/$$/stat" 2>/dev/null | cut -d' ' -f20 || true)
 	echo "${bid:--} $$ ${bst:--}" > "$STATE/renaming"
 }
-run_end() { rm -f "$STATE/renaming"; }
+run_end() { rm -f "$STATE/renaming"; prune; }
+# prune: the list cut to the listed packages dpkg holds part-done (none: no list)
+prune() {
+	[ -e "$STATE/unfinished" ] || return 0
+	kept=$(partdone kept)
+	if [ -n "$kept" ]; then
+		printf '%s\n' $kept | sed 's/:.*//' | sort -u > "$STATE/unfinished.new"
+		mv "$STATE/unfinished.new" "$STATE/unfinished"
+	else
+		rm -f "$STATE/unfinished"
+	fi
+}
 # record_pending NEW...: each new name's mark-to-be (its old name's), recorded just before the run that installs
 # it, which also marks the rename as begun: keep_mark sets the mark, or the next run does if this one stops in
 # between; the next run also installs a new name whose rename a stop cut short after apt had taken the old name
@@ -312,8 +327,10 @@ fi
 # what a run of this script's left part-done ("unfinished": a power loss, a kill, a dpkg error) is finished
 # first, and only that: dpkg configures the listed packages it holds unpacked or half-configured, and apt
 # reinstalls one left half-installed (which dpkg cannot configure). A package someone else left part-done is the
-# owner's: the renames wait for it (safe_apt). The list goes once nothing on it is part-done
+# owner's: the renames wait for it (safe_apt). The list is first cut to what is part-done (a run a power loss or
+# a kill stopped left it whole), and goes once nothing on it is part-done
 idle
+prune
 mine=$(partdone listed)
 if [ -n "$mine" ]; then
 	say "finishing what an earlier run left part-done:$mine"
@@ -330,7 +347,7 @@ if [ -n "$mine" ]; then
 		failed=1 dpkg_broken=1
 	fi
 fi
-[ -n "$mine" ] || rm -f "$STATE/unfinished"
+prune
 # the marks as they are now that dpkg is free (an apt run that installed the keyring may have just ended)
 snapshot
 

@@ -906,5 +906,27 @@ install_keyring
 check "S62: the shipped stanza written (the other-case entry not taken for the board's own)" bash -c "grep -qx 'URIs: file:///srv/test-repo' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending'"
 cleanup
 
+echo "== S63: a package only awaiting triggers (as a power loss before apt's closing configure leaves one) holds nothing back"
+setup
+install_keyring
+# trig-int is interested in /usr/share/trig-test; trig-act ships a file there, installed without trigger
+# processing: trig-int is left triggers-pending
+for t in int act; do
+	d=$W/pkg-trig-$t
+	rm -rf "$d"; mkdir -p "$d/DEBIAN"
+	printf 'Package: trig-%s\nVersion: 1\nArchitecture: all\nMaintainer: t <t@invalid>\nDescription: trigger test\n' "$t" > "$d/DEBIAN/control"
+done
+echo 'interest /usr/share/trig-test' > "$W/pkg-trig-int/DEBIAN/triggers"
+mkdir -p "$W/pkg-trig-act/usr/share/trig-test"
+echo x > "$W/pkg-trig-act/usr/share/trig-test/x"
+for t in int act; do dpkg-deb --root-owner-group -b "$W/pkg-trig-$t" "$mnt/tmp/trig-$t.deb" >/dev/null; done
+in_root dpkg -i /tmp/trig-int.deb > "$W/s63a.log" 2>&1
+in_root dpkg --no-triggers -i /tmp/trig-act.deb >> "$W/s63a.log" 2>&1
+check "S63: the precondition: trig-int triggers-pending" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' trig-int | grep -qx triggers-pending"
+migrate s63.log
+check "S63: the migration finishes (trig-int not taken for a part-done package of someone else's)" grep -q 'done: the board reads' "$W/s63.log"
+check "S63: and leaves no unfinished record (nothing of its runs part-done)" test ! -e "$mnt$S/unfinished"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
