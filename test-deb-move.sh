@@ -312,11 +312,13 @@ migrate s10b.log
 check "S10: a package depending on an old name keeps it through its Provides" bash -c "$(declare -f installed); mnt='$mnt'; grep -q 'done: the board reads' '$W/s10b.log' && installed user-app2 && installed libre-computer-gpio && ! installed libretech-gpio"
 cleanup
 
-echo "== S11: an interrupted dpkg, a dead third-party source, an apt lock held at the start"
+echo "== S11: a dpkg run of the migration's own interrupted, a dead third-party source, an apt lock held at the start"
 setup
 install_keyring
 dummy half-done
 in_root dpkg --unpack /tmp/half-done.deb >/dev/null 2>&1
+# left by an apt run of the migration's (its unfinished mark): ours to finish (S55: someone else's is not)
+touch "$mnt$S/unfinished"
 echo 'deb [trusted=yes] file:///srv/gone ./' > "$mnt/etc/apt/sources.list.d/gone.list"
 cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 if [[ -x $mnt/usr/bin/python3 ]]; then
