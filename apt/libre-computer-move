@@ -105,27 +105,34 @@ Components: main non-free
 Signed-By: $KEY
 EOF
 stamp=$(date +%Y%m%d%H%M%S)
-for f in $old; do
-	b=$STATE/moved-sources/$(basename "$f")
+backup() { # FILE: the path its original is kept at
+	b=$STATE/moved-sources/$(basename "$1")
 	[ ! -e "$b" ] || b=$b.$stamp
+	echo "$b"
+}
+# in place before the old entries go: an interruption from here leaves both sources (apt reads both) and
+# the migration pending
+case " $old " in *" $SRC "*) cp -p "$SRC" "$(backup "$SRC")" ;; esac
+mv "$SRC.new" "$SRC"
+touch "$STATE/migrate-pending"
+for f in $old; do
+	[ "$f" != "$SRC" ] || continue
 	case $f in
 		*.sources) [ "$(sources_awk other "$f")" -eq 0 ] && whole=1 || whole=0 ;;
 		/etc/apt/sources.list) whole=0 ;;
 		*) [ "$(list_other "$f")" -eq 0 ] && whole=1 || whole=0 ;;
 	esac
-	if [ $whole = 1 ] && [ "$f" != "$SRC" ]; then
-		mv "$f" "$b"
+	if [ $whole = 1 ]; then
+		mv "$f" "$(backup "$f")"
 		continue
 	fi
 	# a file with other entries too: the original kept, ours disabled in place
-	cp -p "$f" "$b"
+	cp -p "$f" "$(backup "$f")"
 	case $f in
-		*.sources) sources_awk disable "$f" > "$f.lc-new" && cat "$f.lc-new" > "$f" && rm -f "$f.lc-new" ;;
+		*.sources) sources_awk disable "$f" > "$T/edited" && cat "$T/edited" > "$f" ;;
 		*) sed -i -E 's|^([[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer.*)$|# moved to packages.libre.computer: \1|' "$f" ;;
 	esac
 done
-mv "$SRC.new" "$SRC"
-touch "$STATE/migrate-pending"
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
 
 # the renames need apt, which is busy until this install finishes: a timer runs the one-shot after it

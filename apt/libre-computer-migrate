@@ -36,7 +36,9 @@ wait_lock() {
 	i=0
 	while :; do
 		if "$@" >"$W/out" 2>&1; then return 0; fi
-		if grep -qiE 'could not get lock|lock (was|is) locked by another process|database is locked' "$W/out" &&
+		# apt: "Could not get lock ..."; dpkg: "dpkg frontend lock was locked by <program> process with pid N"
+		# (older: "by another process"), "dpkg status database is locked by another process"
+		if grep -qiE 'could not get lock|lock (was|is) locked by|database is locked' "$W/out" &&
 			[ $i -lt 60 ]; then
 			i=$((i + 1))
 			sleep 30

@@ -301,6 +301,8 @@ t0=$SECONDS
 in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s11.log" 2>&1
 [[ -z ${holder:-} ]] || wait "$holder"
 check "S11: the migration succeeds" grep -q 'done: the board reads' "$W/s11.log"
+grep -q 'done: the board reads' "$W/s11.log" ||
+	{ echo "   -- the migration's last lines:"; tail -n 20 "$W/s11.log" | sed 's/^/   | /'; }
 check "S11: the interrupted package was configured" bash -c "$(declare -f installed); mnt='$mnt'; installed half-done"
 check "S11: the dead source was reported, not fatal" grep -q 'apt-get update reported errors' "$W/s11.log"
 if [[ -n ${holder:-} ]]; then
