@@ -661,5 +661,12 @@ check "S44: the device stays a device; the link replaced by the new source; the 
 check "S44: the link itself kept in moved-sources" test -L "$mnt$S/moved-sources/libre-computer.sources"
 cleanup
 
+echo "== S45: a deb.libre.computer line whose options hold a # (apt keeps it): still ours"
+setup
+echo 'deb [signed-by=/usr/share/keyrings/lc#copy.gpg] https://deb.libre.computer/repo linux main' > "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+install_keyring
+check "S45: the file is set aside and the board moved" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/migrate-pending'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

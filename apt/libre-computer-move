@@ -57,13 +57,14 @@ list_awk() { # MODE FILE
 			raw = $0; body = $0
 			commented = (body ~ /^[[:space:]]*#/)
 			if (commented) sub(/^[[:space:]]*#+[[:space:]]*/, "", body)
-			sub(/#.*$/, "", body)
-			# the options are the [ ... ] right after the type; a bracketed IPv6 host in the URI stays
+			# the options are the [ ... ] right after the type (a # in them is kept, as apt keeps it; a bracketed
+			# IPv6 host in the URI stays); a # after them starts the comment
 			sub(/^[[:space:]]+/, "", body)
 			if (match(body, /^[^[:space:]]+[[:space:]]+\[[^]]*\]/)) {
 				opt = substr(body, 1, RLENGTH); sub(/\[[^]]*\]$/, " ", opt)
-				body = opt substr(body, RLENGTH + 1)
-			}
+				rest = substr(body, RLENGTH + 1); sub(/#.*$/, "", rest)
+				body = opt rest
+			} else sub(/#.*$/, "", body)
 			ntok = split(body, t, /[[:space:]]+/); k = 0
 			for (i = 1; i <= ntok; i++) if (t[i] != "") a[++k] = t[i]
 			type = (k >= 1) ? a[1] : ""; uri = (k >= 2) ? a[2] : ""; dist = (k >= 3) ? a[3] : ""
@@ -284,8 +285,9 @@ if [ $has_new = 1 ]; then
 	# the InRelease, and main for this board's architecture (an entry with only non-free, or for another
 	# architecture, would leave nothing serving the renamed packages)
 	want=$(printf '%s' "$URIN" | tr / _)_dists_${suite}
-	if ! ls "$T/ownlists/" 2>/dev/null | grep -qF -- "${want}_InRelease" ||
-		! ls "$T/ownlists/" 2>/dev/null | grep -qF -- "${want}_main_binary-${ARCH}_Packages"; then
+	# (apt keeps the host's case in its list file names; want is folded: compared without case)
+	if ! ls "$T/ownlists/" 2>/dev/null | grep -qiF -- "${want}_InRelease" ||
+		! ls "$T/ownlists/" 2>/dev/null | grep -qiF -- "${want}_main_binary-${ARCH}_Packages"; then
 		say "the board's own entry for packages.libre.computer is not usable (its key, or the network); staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
 		grep -E '^(E|W|Err):' "$T/own.log" | sed 's/^/  /' || true
 		mkdir -p "$STATE"
