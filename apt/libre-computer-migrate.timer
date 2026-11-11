@@ -1,8 +1,10 @@
 [Unit]
 Description=Retry the Libre Computer package renames until they are done
-# either mark (| makes them alternatives): the renames, or the kernel meta waiting for the owner's upgrade
+# any mark (| makes them alternatives): the renames, the kernel meta waiting for the owner's upgrade, or a
+# move packages.libre.computer was not usable for at the last try
 ConditionPathExists=|/var/lib/libre-computer-archive-keyring/migrate-pending
 ConditionPathExists=|/var/lib/libre-computer-archive-keyring/kernel-pending
+ConditionPathExists=|/var/lib/libre-computer-archive-keyring/move-pending
 
 [Timer]
 # a few minutes after boot, when the network is up and the clock (no RTC on most boards) has been set,

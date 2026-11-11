@@ -536,5 +536,44 @@ install_keyring
 check "S31: the file is set aside, the board moved" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/lc:old.list' && test -e '$mnt$S/migrate-pending' && test -s '$mnt/etc/apt/sources.list.d/libre-computer.sources'"
 cleanup
 
+echo "== S9c: packages.libre.computer not usable at install time: the timer tries the move again later"
+setup
+LCURI=file:///srv/nowhere install_keyring
+check "S9c: stays for now, the retry armed (move-pending, timer enabled)" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/move-pending' && test -L '$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer'"
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+chroot "$mnt" env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo/test-key.gpg \
+	/usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s9c.log" 2>&1
+check "S9c: once it answers, the timer's run moves the board and migrates it" bash -c "$(declare -f installed); mnt='$mnt'; grep -q 'done: the board reads' '$W/s9c.log' && test ! -e '$mnt$S/move-pending' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && installed libre-computer-gpio"
+cleanup
+
+echo "== S32: a .list line for packages.libre.computer whose trailing comment names deb.libre.computer"
+setup
+echo 'deb [signed-by=/usr/share/keyrings/libre-computer-deb.gpg] file:///srv/test-repo trixie main # was deb.libre.computer' > "$mnt/etc/apt/sources.list.d/mine.list"
+install_keyring
+check "S32: that line is not ours: it stays, active, and the board moves" bash -c "grep -qE '^deb .*srv/test-repo trixie main' '$mnt/etc/apt/sources.list.d/mine.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/migrate-pending' && chroot '$mnt' apt-get -q indextargets >/dev/null"
+cleanup
+
+echo "== S33: a symlinked .list holding ours and another repository: edited through the link, still a link"
+setup
+mkdir -p "$mnt/etc/apt/lists-real"
+mv "$mnt/etc/apt/sources.list.d/libre-computer-deb.list" "$mnt/etc/apt/lists-real/lc.list"
+echo 'deb file:///srv/other trixie main' >> "$mnt/etc/apt/lists-real/lc.list"
+ln -s /etc/apt/lists-real/lc.list "$mnt/etc/apt/sources.list.d/lc.list"
+install_keyring
+check "S33: still a symlink; its target has ours commented out, the other line active" bash -c "test -L '$mnt/etc/apt/sources.list.d/lc.list' && grep -q '^# moved to packages.libre.computer: deb .*deb.libre.computer' '$mnt/etc/apt/lists-real/lc.list' && grep -qx 'deb file:///srv/other trixie main' '$mnt/etc/apt/lists-real/lc.list'"
+cleanup
+
+echo "== S34: a blocked userspace rename does not hold back the kernel step"
+setup
+dummy linux-image-lc-lts-arm
+in_root dpkg -i /tmp/linux-image-lc-lts-arm.deb >/dev/null 2>&1
+dummy linux-image-lc-lts-armhf
+in_root dpkg -i /tmp/linux-image-lc-lts-armhf.deb >/dev/null 2>&1
+in_root apt-mark hold libretech-alsa-ucm-conf >/dev/null 2>&1
+install_keyring
+migrate s34.log
+check "S34: the kernel's old name goes while the held rename waits" bash -c "$(declare -f installed); mnt='$mnt'; ! installed linux-image-lc-lts-arm && installed linux-image-lc-lts-armhf && installed libretech-alsa-ucm-conf && test -e '$mnt$S/migrate-pending'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

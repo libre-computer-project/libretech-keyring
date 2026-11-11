@@ -22,15 +22,36 @@ STATE=/var/lib/libre-computer-archive-keyring
 PKG=${DPKG_MAINTSCRIPT_PACKAGE:-libre-computer-archive-keyring}
 say() { echo "libre-computer-archive-keyring: $*"; }
 
-# one-line (.list) entries. ours: active lines naming the frozen repo. other: any deb line, active or
-# commented out, naming anything else (a file with one is edited in place, not set aside). new: active
-# lines naming packages.libre.computer for the board's suite
-list_ours() { grep -csE '^[[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer' "$1" || true; }
-list_other() {
-	{ grep -sE '^[[:space:]]*#[[:space:]]*deb(-src)?[[:space:]]' "$1"
-		grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -v 'deb\.libre\.computer'; } | grep -c . || true
+# one-line (.list) entries, read by field as apt reads them: TYPE [OPTIONS] URI SUITE COMPONENTS, a # starting a
+# comment (a whole line, or the rest of one). Only the URI decides whose entry it is -- not a signed-by path or
+# a trailing comment that mentions a repository. ours: active entries for the frozen repo; other: active
+# entries for any other repository, or commented-out entries (content that must stay); new: an active deb
+# entry for packages.libre.computer and the board's suite; disable: the file with ours commented out
+list_awk() { # MODE FILE
+	awk -v mode="$1" -v new="$URIHOST" -v suite="$suite" '
+		{ sub(/\r$/, "") }
+		{
+			raw = $0; body = $0
+			commented = (body ~ /^[[:space:]]*#/)
+			if (commented) sub(/^[[:space:]]*#[[:space:]]*/, "", body)
+			sub(/#.*$/, "", body)
+			gsub(/\[[^]]*\]/, " ", body)
+			ntok = split(body, t, /[[:space:]]+/); k = 0
+			for (i = 1; i <= ntok; i++) if (t[i] != "") a[++k] = t[i]
+			type = (k >= 1) ? a[1] : ""; uri = (k >= 2) ? a[2] : ""; dist = (k >= 3) ? a[3] : ""
+			entry = (type == "deb" || type == "deb-src") && uri != ""
+			libre = entry && uri ~ /deb\.libre\.computer/
+			if (entry && mode == "ours" && !commented && libre) c++
+			if (entry && mode == "other" && (commented || !libre)) c++
+			if (entry && mode == "new" && !commented && type == "deb" && index(uri, new) && dist == suite) c++
+			if (mode == "disable") {
+				if (entry && !commented && libre) print "# moved to packages.libre.computer: " raw
+				else print raw
+			}
+		}
+		END { if (mode != "disable") print c + 0 }
+	' "$2"
 }
-list_new() { grep -sE '^[[:space:]]*deb[[:space:]]' "$1" | grep -F "$URIHOST" | grep -cE "[[:space:]]$suite([[:space:]]|\$)" || true; }
 # deb822 (.sources) stanzas, parsed as apt 3 does: only an empty line ends a stanza (a line of white space
 # continues the field before it; a CRLF file's carriage returns are dropped first, as apt drops them), and Enabled: is false for no / false / without / off / disable / 0 (apt's
 # StringToBool). A stanza's URIs may name several repositories. ours: enabled stanzas naming the frozen repo;
@@ -97,7 +118,7 @@ sources_awk() { # MODE FILE
 count() { # MODE FILE: entries of that kind in one sources file, either format
 	case $2 in
 		*.sources) sources_awk "$1" "$2" ;;
-		*) "list_$1" "$2" ;;
+		*) list_awk "$1" "$2" ;;
 	esac
 }
 
@@ -122,10 +143,13 @@ for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.l
 	[ "$(count ours "$f")" -gt 0 ] || continue
 	old="$old $f"
 done
-[ -n "$old" ] || exit 0
+# move-pending: a move the timer retries (packages.libre.computer was not usable at the last try)
+retry_off() { rm -f "$STATE/move-pending"; }
+[ -n "$old" ] || { retry_off; exit 0; }
 
 if [ -z "$suite" ]; then
 	say "this release (${ID:-unknown} ${VERSION_CODENAME:-unknown}) is not served by packages.libre.computer; staying on deb.libre.computer"
+	retry_off
 	exit 0
 fi
 
@@ -136,6 +160,7 @@ others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 
 	grep -vE '^linux-image-lc-lts-(arm64|arm|armhf|amd64)$' || true)
 if [ -n "$others" ]; then
 	say "this board follows a kernel channel packages.libre.computer does not carry ($(echo $others)); staying on deb.libre.computer"
+	retry_off
 	exit 0
 fi
 
@@ -155,8 +180,13 @@ stanza "$PROBE_KEY" > "$T/parts/probe.sources"
 if ! apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/parts" \
 	-o Dir::State::Lists="$T/lists" -o Dir::Cache="$T/cache" update >"$T/probe.log" 2>&1 ||
 	! ls "$T/lists/" 2>/dev/null | grep -q 'InRelease$'; then
-	say "packages.libre.computer ($URI) is not usable from this board; staying on deb.libre.computer. Run 'dpkg-reconfigure $PKG' to try again. apt said:"
+	say "packages.libre.computer ($URI) is not usable from this board; staying on deb.libre.computer for now, and trying again every 6 hours (or run 'dpkg-reconfigure $PKG'). apt said:"
 	grep -E '^(E|W|Err):' "$T/probe.log" | sed 's/^/  /' || true
+	# a network or clock fault at upgrade time must not leave the board on the frozen repo for good
+	mkdir -p "$STATE"
+	touch "$STATE/move-pending"
+	systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+	[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
 	exit 0
 fi
 
@@ -195,6 +225,7 @@ if [ $has_new = 0 ]; then
 		if [ -n "$src_backup" ]; then cp -p "$src_backup" "$SRC"; else rm -f "$SRC"; fi
 		say "apt cannot read the sources with packages.libre.computer added beside the board's own entry for it; staying on deb.libre.computer. apt said:"
 		grep -E '^(E|W):' "$T/after.log" | sed 's/^/  /' || true
+		retry_off
 		exit 0
 	fi
 fi
@@ -202,6 +233,7 @@ fi
 # 2. the migration pending and its timer enabled, before the old entries go: an interruption from here
 # leaves both sources (apt reads both) and the migration still runs
 touch "$STATE/migrate-pending"
+retry_off
 systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 
 # 3. the deb.libre.computer entries out
@@ -216,12 +248,15 @@ for f in $old; do
 		mv "$f" "$(backup "$f")"
 		continue
 	fi
-	# a file with other entries too: the original kept, ours disabled in place
+	# a file with other entries too: the original kept, ours disabled in place -- in the file itself, or in
+	# the file a symlink names (the link stays a link), through a copy renamed over it
 	cp -p "$f" "$(backup "$f")"
+	real=$(readlink -f "$f")
 	case $f in
-		*.sources) sources_awk disable "$f" > "$f.lc-new" && mv "$f.lc-new" "$f" ;;
-		*) sed -i -E 's|^([[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer.*)$|# moved to packages.libre.computer: \1|' "$f" ;;
+		*.sources) sources_awk disable "$f" > "$real.lc-new" ;;
+		*) list_awk disable "$f" > "$real.lc-new" ;;
 	esac
+	mv "$real.lc-new" "$real"
 done
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
 

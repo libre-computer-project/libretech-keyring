@@ -2,11 +2,14 @@
 set -e
 case "$1" in
 	purge)
-		# the move's state (the pending migration, the old source files kept), unless the keyring's other name
-		# is installed and still uses it: purging libretech-keyring during the rename, or later from its
-		# config-files state, must not stop the migration or lose the originals
-		if [ ! -e /usr/lib/libre-computer-archive-keyring/libre-computer-migrate ]; then
-			rm -rf /var/lib/libre-computer-archive-keyring
+		# the move's state (the pending marks, the old source files kept), unless the keyring's other name is
+		# installed or a migration is under way: purging libretech-keyring during the rename (apt may purge it
+		# before it unpacks libre-computer-archive-keyring), or later from its config-files state, must not
+		# stop the migration or lose the originals
+		S=/var/lib/libre-computer-archive-keyring
+		if [ ! -e /usr/lib/libre-computer-archive-keyring/libre-computer-migrate ] && [ ! -e "$S/migrate-pending" ] &&
+			[ ! -e "$S/kernel-pending" ] && [ ! -e "$S/move-pending" ]; then
+			rm -rf "$S"
 		fi
 		;;
 	remove)

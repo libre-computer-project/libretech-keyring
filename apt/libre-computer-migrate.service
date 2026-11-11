@@ -1,15 +1,17 @@
 [Unit]
 Description=Move the Libre Computer packages to their libre-computer names (once, after the move to packages.libre.computer)
-# either mark (| makes them alternatives): the renames, or the kernel meta waiting for the owner's upgrade
+# any mark (| makes them alternatives): the renames, the kernel meta waiting for the owner's upgrade, or a
+# move packages.libre.computer was not usable for at the last try
 ConditionPathExists=|/var/lib/libre-computer-archive-keyring/migrate-pending
 ConditionPathExists=|/var/lib/libre-computer-archive-keyring/kernel-pending
+ConditionPathExists=|/var/lib/libre-computer-archive-keyring/move-pending
 Wants=network-online.target
 After=network-online.target time-sync.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/libre-computer-archive-keyring/libre-computer-migrate
-# it waits up to 30 min for each apt or dpkg lock, steps that add up past any fixed limit, and a stop on a
+# it waits up to 2 h for each apt or dpkg lock, steps that add up past any fixed limit, and a stop on a
 # timeout would kill dpkg mid-install; nothing waits on this unit (the timer starts it). A failure leaves
 # the pending mark and the timer retries
 TimeoutStartSec=infinity
