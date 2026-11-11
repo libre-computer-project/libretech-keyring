@@ -411,13 +411,14 @@ if [ $has_new = 0 ]; then
 	apt-get -q -o Dir::Cache="$T/icache" indextargets >/dev/null 2>"$T/before.log" || true
 	# asked first of a copy of the sources with the new file in it: a board whose sources apt would refuse
 	# keeps its own untouched (nothing written, no copy kept; the timer asks again). apt names the copy's
-	# files in what it says, so the copy's directory is read as the real one
-	mkdir -p "$T/parts"
-	cp -a "$SP/." "$T/parts/"
-	rm -f "$T/parts/${SRC##*/}"
-	cp "$T/src" "$T/parts/${SRC##*/}"
-	apt-get -q -o Dir::Cache="$T/icache" -o Dir::Etc::SourceParts="$T/parts" indextargets >/dev/null 2>"$T/pre.raw" || true
-	awk -v a="$T/parts" -v b="$SP" '{
+	# files in what it says, so the copy's directory is read as the real one. (A directory of its own: the
+	# probe's $T/parts holds the probe stanza)
+	mkdir "$T/withnew"
+	cp -a "$SP/." "$T/withnew/"
+	rm -f "$T/withnew/${SRC##*/}"
+	cp "$T/src" "$T/withnew/${SRC##*/}"
+	apt-get -q -o Dir::Cache="$T/icache" -o Dir::Etc::SourceParts="$T/withnew" indextargets >/dev/null 2>"$T/pre.raw" || true
+	awk -v a="$T/withnew" -v b="$SP" '{
 		o = ""
 		while ((i = index($0, a)) > 0) { o = o substr($0, 1, i - 1) b; $0 = substr($0, i + length(a)) }
 		print o $0
