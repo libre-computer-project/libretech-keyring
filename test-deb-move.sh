@@ -72,6 +72,8 @@ standin linux-image-lc-lts-armhf linux-image-lc-lts-arm
 cp "$new_keyring" "$trans_keyring" "$R/pool/"
 # the key libre-computer-move verifies the repository with (LC_PACKAGES_KEY), inside the chroot at /srv/test-repo
 cp "$W/test-key.gpg" "$R/test-key.gpg"
+reindex() { # the repository's index and signature, after its pool changed
+local s
 for s in trixie; do
 	mkdir -p "$R/dists/$s/main/binary-arm64" "$R/dists/$s/main/binary-all" "$R/dists/$s/non-free/binary-arm64"
 	(cd "$R" && apt-ftparchive packages pool > "dists/$s/main/binary-arm64/Packages")
@@ -81,8 +83,11 @@ for s in trixie; do
 		-o APT::FTPArchive::Release::Components="main non-free" -o APT::FTPArchive::Release::Architectures="arm64 all" \
 		release "$R/dists/$s" > "$W/Release"
 	mv "$W/Release" "$R/dists/$s/Release"
+	rm -f "$R/dists/$s/InRelease"
 	gpg --batch --homedir "$G" --clearsign -o "$R/dists/$s/InRelease" "$R/dists/$s/Release"
 done
+}
+reindex
 
 # --- a copy of the image as a chroot, with the repository at /srv/test-repo ------------------------
 setup() {
@@ -449,6 +454,44 @@ printf 'Types: deb\nURIs: https://deb.libre.computer/repo file:///srv/test-repo\
 install_keyring
 check "S24: no second source (it would conflict on Signed-By), the stanza keeps packages.libre.computer" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -q 'srv/test-repo' '$mnt/etc/apt/sources.list.d/both.sources' && test -e '$mnt$S/migrate-pending'"
 check "S24: apt reads every source" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null indextargets
+cleanup
+
+echo "== S25: a suite with no transitional libretech-keyring, apt set to purge: the migration's state survives"
+# the repository without the transitional libretech-keyring: apt removes (purges) the self-contained one first
+deblibre_repo "$deblibre_keyring"
+setup_deblibre
+echo 'APT::Get::Purge "true";' > "$mnt/etc/apt/apt.conf.d/99purge"
+rm -f "$R/pool/${trans_keyring##*/}"
+reindex
+upgrade
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+in_root apt-mark hold libretech-alsa-ucm-conf >/dev/null 2>&1
+in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s25.log" 2>&1
+check "S25: libretech-keyring purged, libre-computer-archive-keyring in" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring && ! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring 2>/dev/null | grep -qxE 'installed|config-files'"
+check "S25: the pending mark and the moved sources survive (a rename is left: retried)" bash -c "test -e '$mnt$S/migrate-pending' && test -s '$mnt$S/moved-sources/libre-computer-deb.list'"
+cleanup
+cp "$trans_keyring" "$R/pool/"
+reindex
+
+echo "== S26: a file apt does not read (a name with a space) names packages.libre.computer: it does not count"
+setup
+echo 'deb [signed-by=/usr/share/keyrings/libre-computer-deb.gpg] file:///srv/test-repo trixie main' > "$mnt/etc/apt/sources.list.d/not read.list"
+install_keyring
+check "S26: the new source is written (the unread file is ignored), the board moved" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending' && test -s '$mnt/etc/apt/sources.list.d/not read.list'"
+cleanup
+
+echo "== S27: a .list with a commented-out deb.libre.computer line beside the active one: the file stays"
+setup
+echo '# deb https://deb.libre.computer/repo linux-testing main' >> "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+install_keyring
+check "S27: the file stays in place, both lines commented" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && ! grep -qE '^[[:space:]]*deb ' '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && grep -q 'linux-testing' '$mnt/etc/apt/sources.list.d/libre-computer-deb.list'"
+cleanup
+
+echo "== S28: a deb-src-only packages.libre.computer entry does not count as the board's new source"
+setup
+echo 'deb-src [signed-by=/usr/share/keyrings/libre-computer-deb.gpg] file:///srv/test-repo trixie main' > "$mnt/etc/apt/sources.list.d/src.list"
+install_keyring
+check "S28: the binary source is written" bash -c "grep -qx 'Types: deb' '$mnt/etc/apt/sources.list.d/libre-computer.sources'"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"

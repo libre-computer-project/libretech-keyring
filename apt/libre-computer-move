@@ -24,8 +24,11 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 # commented out, naming anything else (a file with one is edited in place, not set aside). new: active
 # lines naming packages.libre.computer for the board's suite
 list_ours() { grep -csE '^[[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer' "$1" || true; }
-list_other() { grep -sE '^[[:space:]]*(#[[:space:]]*)?deb(-src)?[[:space:]]' "$1" | grep -cv 'deb\.libre\.computer' || true; }
-list_new() { grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -F "$URI" | grep -cE "[[:space:]]$suite([[:space:]]|\$)" || true; }
+list_other() {
+	{ grep -sE '^[[:space:]]*#[[:space:]]*deb(-src)?[[:space:]]' "$1"
+		grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -v 'deb\.libre\.computer'; } | grep -c . || true
+}
+list_new() { grep -sE '^[[:space:]]*deb[[:space:]]' "$1" | grep -F "$URI" | grep -cE "[[:space:]]$suite([[:space:]]|\$)" || true; }
 # deb822 (.sources) stanzas, parsed as apt 3 does: only an empty line ends a stanza (a line of white space
 # continues the field before it; a CRLF file's carriage returns are dropped first, as apt drops them), and Enabled: is false for no / false / without / off / disable / 0 (apt's
 # StringToBool). A stanza's URIs may name several repositories. ours: enabled stanzas naming the frozen repo;
@@ -35,7 +38,7 @@ list_new() { grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -F "$URI"
 # enabled stanza (the stanza disabled when it named nothing else, its other URIs kept when it did)
 sources_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URI" -v suite="$suite" '
-		function flush(   k, t, ntok, keep, libre, oth, mine, hs) {
+		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd) {
 			if (n == 0) return
 			v = uris; sub(/^[^:]*:/, "", v)
 			ntok = split(v, t, /[[:space:]]+/); keep = ""; libre = 0; oth = 0
@@ -50,7 +53,10 @@ sources_awk() { # MODE FILE
 			hs = 0
 			ntok = split(suites, t, /[[:space:]]+/)
 			for (k = 1; k <= ntok; k++) if (t[k] == suite) hs = 1
-			if (mode == "new" && !off && index(v, new) && hs) c++
+			hd = 0
+			ntok = split(types, t, /[[:space:]]+/)
+			for (k = 1; k <= ntok; k++) if (t[k] == "deb") hd = 1
+			if (mode == "new" && !off && index(v, new) && hs && hd) c++
 			if (mode == "disable") {
 				for (k = 1; k <= n; k++) {
 					if (mine && oth && isuri[k]) continue
@@ -61,7 +67,7 @@ sources_awk() { # MODE FILE
 				if (mine && !oth) print "Enabled: no"
 				print ""
 			}
-			n = 0; uris = ""; suites = ""; off = 0; field = ""
+			n = 0; uris = ""; suites = ""; types = ""; off = 0; field = ""
 			split("", isuri)
 		}
 		{ sub(/\r$/, "") }
@@ -74,11 +80,13 @@ sources_awk() { # MODE FILE
 			if (l ~ /^[[:space:]]/) {
 				if (field == "uris") { uris = uris " " $0; isuri[n] = 1 }
 				if (field == "suites") suites = suites " " $0
+				if (field == "types") types = types " " $0
 				next
 			}
 			field = l; sub(/:.*/, "", field)
 			if (field == "uris") { uris = $0; isuri[n] = 1 }
 			if (field == "suites") { suites = $0; sub(/^[^:]*:/, "", suites) }
+			if (field == "types") { types = $0; sub(/^[^:]*:/, "", types) }
 			if (l ~ /^enabled:[[:space:]]*(no|false|without|off|disable|0)[[:space:]]*$/) off = 1
 		}
 		END { flush(); if (mode != "disable") print c + 0 }
@@ -105,6 +113,9 @@ esac
 old="" has_new=0
 for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
 	[ -f "$f" ] || continue
+	# only a file apt reads: it skips a name with any character outside letters, digits, _ - . (so no name
+	# with a space reaches the loops below)
+	case ${f##*/} in *[!A-Za-z0-9_.-]*) continue ;; esac
 	[ "$(count new "$f")" -eq 0 ] || has_new=1
 	[ "$(count ours "$f")" -gt 0 ] || continue
 	old="$old $f"

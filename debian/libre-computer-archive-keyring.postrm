@@ -2,7 +2,12 @@
 set -e
 case "$1" in
 	purge)
-		rm -rf /var/lib/libre-computer-archive-keyring
+		# the move's state (the pending migration, the old source files kept), unless the keyring's other name
+		# is installed and still uses it: purging libretech-keyring during the rename, or later from its
+		# config-files state, must not stop the migration or lose the originals
+		if [ ! -e /usr/lib/libre-computer-archive-keyring/libre-computer-migrate ]; then
+			rm -rf /var/lib/libre-computer-archive-keyring
+		fi
 		;;
 	remove)
 		# the timer libre-computer-move enabled, unless another package still ships it (the keyring's
