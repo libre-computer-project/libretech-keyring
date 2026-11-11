@@ -18,6 +18,8 @@ say() { echo "libre-computer-migrate: $*"; }
 [ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || [ -e "$STATE/move-pending" ] || exit 0
 
 export DEBIAN_FRONTEND=noninteractive
+# apt's and dpkg's messages untranslated: is_locked reads them (a service inherits the system locale)
+export LC_ALL=C
 # no DPkg::Lock::Timeout: wait_lock waits for every lock (apt's own wait covers dpkg's alone, and would add
 # its timeout to each of wait_lock's retries)
 APT="apt-get -q -y -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
@@ -149,57 +151,58 @@ if [ -e "$STATE/migrate-pending" ]; then
 		say "apt-get update reported errors; going on:"
 		grep -E '^(E|W):' "$W/out" | sed 's/^/  /' || true
 	fi
-	# a repository's index lists it (an installed copy alone shows only /var/lib/dpkg/status)
+	# a repository's index lists it (an installed copy alone shows only /var/lib/dpkg/status). Without the
+	# lists the renames wait for the next run; the kernel step below runs either way
 	if ! apt-cache policy libre-computer-archive-keyring 2>/dev/null | grep -q ' Packages$'; then
 		say "packages.libre.computer's package lists are not here (no network, or a clock behind the repository's date); will retry"
-		exit 1
-	fi
-
-	new=""
-	for p in $pairs; do
-		o=${p%%:*} n=${p#*:}
-		[ "$(st "$o")" != installed ] || [ "$(st "$n")" = installed ] || new="$new $n"
-	done
-	if [ -n "$new" ]; then
-		say "installing$new (in place of their old names)"
-		# a rename adds nothing the board did not have: not the new packages' Recommends (dtoverlay's i2c-tools,
-		# spi-tools; xorg's xserver-xorg), which an owner may have left out on purpose. All in one step (their
-		# dependencies on one another resolve together); if apt refuses that, each on its own, so one name
-		# that cannot go in (held, missing, or removing something else) does not hold back the others
-		# shellcheck disable=SC2086
-		if ! safe_apt install --no-install-recommends $new; then
-			for n in $new; do
-				[ "$(st "$n")" = installed ] || safe_apt install --no-install-recommends "$n" || true
-			done
-		fi
-	fi
-	# an old name its new one did not displace (a transitional package, which only Depends on the new name)
-	# goes once the new name is in, the new name keeping the old one's mark
-	gone=""
-	for p in $pairs; do
-		o=${p%%:*} n=${p#*:}
-		[ "$(st "$o")" != installed ] || [ "$(st "$n")" != installed ] || gone="$gone $o"
-	done
-	# shellcheck disable=SC2086
-	keep_mark $pairs
-	# shellcheck disable=SC2086
-	gone=$(marked $gone)
-	if [ -n "$gone" ]; then
-		say "removing$gone (their libre-computer names are installed)"
-		# shellcheck disable=SC2086
-		remove_old $gone
-	fi
-	left=""
-	for p in $pairs; do
-		o=${p%%:*}
-		[ "$(st "$o")" != installed ] || left="$left $o"
-	done
-	# a name still under its old one is retried; the kernel step below runs either way
-	if [ -n "$left" ]; then
-		say "still installed under an old name:$left; will retry"
 	else
-		rm -f "$STATE/migrate-pending"
-		say "done: the board reads packages.libre.computer under the libre-computer names"
+
+		new=""
+		for p in $pairs; do
+			o=${p%%:*} n=${p#*:}
+			[ "$(st "$o")" != installed ] || [ "$(st "$n")" = installed ] || new="$new $n"
+		done
+		if [ -n "$new" ]; then
+			say "installing$new (in place of their old names)"
+			# a rename adds nothing the board did not have: not the new packages' Recommends (dtoverlay's i2c-tools,
+			# spi-tools; xorg's xserver-xorg), which an owner may have left out on purpose. All in one step (their
+			# dependencies on one another resolve together); if apt refuses that, each on its own, so one name
+			# that cannot go in (held, missing, or removing something else) does not hold back the others
+			# shellcheck disable=SC2086
+			if ! safe_apt install --no-install-recommends $new; then
+				for n in $new; do
+					[ "$(st "$n")" = installed ] || safe_apt install --no-install-recommends "$n" || true
+				done
+			fi
+		fi
+		# an old name its new one did not displace (a transitional package, which only Depends on the new name)
+		# goes once the new name is in, the new name keeping the old one's mark
+		gone=""
+		for p in $pairs; do
+			o=${p%%:*} n=${p#*:}
+			[ "$(st "$o")" != installed ] || [ "$(st "$n")" != installed ] || gone="$gone $o"
+		done
+		# shellcheck disable=SC2086
+		keep_mark $pairs
+		# shellcheck disable=SC2086
+		gone=$(marked $gone)
+		if [ -n "$gone" ]; then
+			say "removing$gone (their libre-computer names are installed)"
+			# shellcheck disable=SC2086
+			remove_old $gone
+		fi
+		left=""
+		for p in $pairs; do
+			o=${p%%:*}
+			[ "$(st "$o")" != installed ] || left="$left $o"
+		done
+		# a name still under its old one is retried; the kernel step below runs either way
+		if [ -n "$left" ]; then
+			say "still installed under an old name:$left; will retry"
+		else
+			rm -f "$STATE/migrate-pending"
+			say "done: the board reads packages.libre.computer under the libre-computer names"
+		fi
 	fi
 fi
 

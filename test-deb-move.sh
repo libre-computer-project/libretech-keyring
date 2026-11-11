@@ -596,5 +596,18 @@ install_keyring
 check "S36: stays on deb.libre.computer, the move retried by the timer" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/move-pending' && test ! -e '$mnt$S/migrate-pending' && grep -q 'own entry for packages.libre.computer is not usable' '$W/dpkg.log'"
 cleanup
 
+echo "== S38: the board's own entry works while the shipped stanza would not (here: its key does not sign the repo)"
+setup
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+echo 'deb [signed-by=/usr/share/keyrings/own-copy.gpg] file:///srv/test-repo trixie main' > "$mnt/etc/apt/sources.list.d/mine.list"
+LCKEY= install_keyring
+check "S38: the board moves on its own entry: no source written, deb.libre.computer's set aside, migration pending" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/move-pending'"
+cleanup
+
+echo "== S39: apt's and dpkg's messages are read untranslated (the service inherits the system locale)"
+for f in libre-computer-move libre-computer-migrate; do
+	check "S39: $f exports LC_ALL=C" bash -c "dpkg-deb --fsys-tarfile '$new_keyring' | tar -xO ./usr/lib/libre-computer-archive-keyring/$f | grep -qx 'export LC_ALL=C'"
+done
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

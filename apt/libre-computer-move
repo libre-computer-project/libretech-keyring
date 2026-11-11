@@ -12,6 +12,8 @@
 # LC_PACKAGES_URI and LC_PACKAGES_KEY override the repository URI and the key the reachability check
 # verifies it with (tests only: the source written always names the shipped key).
 set -eu
+# apt's and dpkg's messages untranslated: some are read below
+export LC_ALL=C
 URI=${LC_PACKAGES_URI:-https://packages.libre.computer/deb}
 KEY=/usr/share/keyrings/libre-computer-deb.gpg
 PROBE_KEY=${LC_PACKAGES_KEY:-$KEY}
@@ -116,7 +118,7 @@ sources_awk() { # MODE FILE
 			if (field == "uris") { uris = $0; isuri[n] = 1 }
 			if (field == "suites") { suites = $0; sub(/^[^:]*:/, "", suites) }
 			if (field == "types") { types = $0; sub(/^[^:]*:/, "", types) }
-			if (field == "enabled") off = (l ~ /^enabled:[[:space:]]*(no|false|without|off|disable|[+-]?0+)[[:space:]]*$/)
+			if (field == "enabled") off = (l ~ /^enabled:[[:space:]]*(no|false|without|off|disable|[+-]?(0[xX])?0+)[[:space:]]*$/)
 		}
 		END { flush(); if (mode != "disable") print c + 0 }
 	' "$2"
@@ -177,23 +179,27 @@ stanza() { # KEY: the new source's stanza
 	printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: main non-free\nSigned-By: %s\n' "$URI" "$suite" "$1"
 }
 
-# packages.libre.computer must be usable from here before anything changes: apt itself updates the new
+# packages.libre.computer must be usable from here before anything changes, through the source the board
+# will read: the shipped stanza (checked here), or the board's own entry for it (checked below, and then
+# the shipped stanza is not needed: an http-only path is fine for an http entry). apt itself updates the new
 # source alone into scratch lists (apt's proxy settings apply; it checks the signature, and the Release
 # date against the board's clock). A proxy or an egress allowlist can admit only the old host
-mkdir -p "$T/parts" "$T/lists/partial" "$T/cache/archives/partial"
-! id _apt >/dev/null 2>&1 || chown _apt "$T/lists/partial" "$T/cache/archives/partial"
-stanza "$PROBE_KEY" > "$T/parts/probe.sources"
-if ! apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/parts" \
-	-o Dir::State::Lists="$T/lists" -o Dir::Cache="$T/cache" update >"$T/probe.log" 2>&1 ||
-	! ls "$T/lists/" 2>/dev/null | grep -q 'InRelease$'; then
-	say "packages.libre.computer ($URI) is not usable from this board; staying on deb.libre.computer for now, and trying again every 6 hours (or run 'dpkg-reconfigure $PKG'). apt said:"
-	grep -E '^(E|W|Err):' "$T/probe.log" | sed 's/^/  /' || true
-	# a network or clock fault at upgrade time must not leave the board on the frozen repo for good
-	mkdir -p "$STATE"
-	touch "$STATE/move-pending"
-	systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-	[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
-	exit 0
+if [ $has_new = 0 ]; then
+	mkdir -p "$T/parts" "$T/lists/partial" "$T/cache/archives/partial"
+	! id _apt >/dev/null 2>&1 || chown _apt "$T/lists/partial" "$T/cache/archives/partial"
+	stanza "$PROBE_KEY" > "$T/parts/probe.sources"
+	if ! apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/parts" \
+		-o Dir::State::Lists="$T/lists" -o Dir::Cache="$T/cache" update >"$T/probe.log" 2>&1 ||
+		! ls "$T/lists/" 2>/dev/null | grep -q 'InRelease$'; then
+		say "packages.libre.computer ($URI) is not usable from this board; staying on deb.libre.computer for now, and trying again every 6 hours (or run 'dpkg-reconfigure $PKG'). apt said:"
+		grep -E '^(E|W|Err):' "$T/probe.log" | sed 's/^/  /' || true
+		# a network or clock fault at upgrade time must not leave the board on the frozen repo for good
+		mkdir -p "$STATE"
+		touch "$STATE/move-pending"
+		systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+		[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
+		exit 0
+	fi
 fi
 
 # a board that already has an entry for packages.libre.computer keeps it (step 1 writes none): that entry,
@@ -250,6 +256,8 @@ if [ $has_new = 0 ]; then
 	# into the file itself, or the file a symlink names (the link stays a link)
 	real_src=$SRC
 	[ ! -L "$SRC" ] || real_src=$(readlink -f "$SRC")
+	# an existing file's mode and owner kept: the new content goes into a copy of it
+	[ ! -e "$real_src" ] || cp -p "$real_src" "$real_src.new"
 	cat "$T/src" > "$real_src.new"
 	mv "$real_src.new" "$real_src"
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
