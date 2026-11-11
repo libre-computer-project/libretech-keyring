@@ -362,7 +362,8 @@ if [ $has_new = 0 ]; then
 		stanza "$KEY" >> "$T/src"
 	fi
 	# what apt says of the sources now: a source it refuses after the change, and did not before, is ours to undo
-	apt-get -q indextargets >/dev/null 2>"$T/before.log" || true
+	mkdir -p "$T/icache"
+	apt-get -q -o Dir::Cache="$T/icache" indextargets >/dev/null 2>"$T/before.log" || true
 	src_backup="" src_link=""
 	if [ -f "$SRC" ]; then
 		src_backup=$(backup "$SRC")
@@ -391,7 +392,7 @@ if [ $has_new = 0 ]; then
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
 	# this script does not recognise (another scheme, deb-src only, another Signed-By) can make apt refuse
 	# every source beside the new one. Then nothing has changed yet: the previous file comes back
-	apt-get -q indextargets >/dev/null 2>"$T/after.log" || true
+	apt-get -q -o Dir::Cache="$T/icache" indextargets >/dev/null 2>"$T/after.log" || true
 	if ! cmp -s "$T/before.log" "$T/after.log" && grep -q '^E:' "$T/after.log"; then
 		if [ -n "$src_backup" ]; then
 			cp -p "$src_backup" "$real_src"

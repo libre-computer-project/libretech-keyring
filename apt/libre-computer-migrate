@@ -28,7 +28,10 @@ export LC_ALL=C
 # and no Suggests (a board may set Install-Suggests): a rename adds nothing the board did not have
 APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o APT::Install-Suggests=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
 W=$(mktemp -d)
-trap 'rm -rf "$W"' EXIT
+# the "renaming" mark while this runs: the old package's postrm keeps the timer and the state for the rename
+mkdir -p "$STATE"
+touch "$STATE/renaming"
+trap 'rm -rf "$W"; rm -f "$STATE/renaming"' EXIT
 # a stop (shutdown) while apt or dpkg runs: the shell runs this once that command has finished, so dpkg is
 # never left half-done by us (the unit's KillMode=process signals this script alone)
 trap 'say "stopping after the step that was running"; exit 1' TERM
@@ -125,14 +128,15 @@ keep_mark() {
 		[ "$(st "$n")" = installed ] || continue
 		case $autos in *" $o "*) m=auto ;; *) m=manual ;; esac
 		case $newmanual in *" $n "*) m=manual ;; esac
-		# a mark an earlier run could not set (apt had marked the new name manual meanwhile)
-		[ ! -s "$STATE/mark-$n" ] || m=$(cat "$STATE/mark-$n")
+		# manual an earlier run could not set (only manual is remembered: an automatic one could undo a manual
+		# mark the owner set since, and a new name left manual is never taken by autoremove)
+		[ ! -s "$STATE/mark-$n" ] || m=manual
 		if wait_lock apt-mark "$m" "$n"; then
 			rm -f "$STATE/mark-$n"
 		else
 			say "could not mark $n $m; keeping $o for now"
 			unmarked="$unmarked$o "
-			echo "$m" > "$STATE/mark-$n"
+			[ "$m" != manual ] || echo manual > "$STATE/mark-$n"
 		fi
 	done
 }
@@ -218,7 +222,8 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 					progress=0
 					for n in $new; do
 						[ "$(st "$n")" != installed ] || continue
-						! install_new "$n" || progress=1
+						install_new "$n" || true
+						[ "$(st "$n")" != installed ] || progress=1
 					done
 				done
 			fi

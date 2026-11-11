@@ -1,29 +1,25 @@
 #!/bin/sh
 set -e
+S=/var/lib/libre-computer-archive-keyring
+# the rename under way: libre-computer-migrate holds the "renaming" mark while it runs, and apt may remove or purge
+# the old libretech-keyring before it unpacks libre-computer-archive-keyring, which takes the unit and the state
+# over. Then the timer's link and the state stay. Any other removal (libre-computer-archive-keyring itself, or the
+# owner removing libretech-keyring by hand) takes them with it: nothing would run the work left
+renaming() {
+	[ "${DPKG_MAINTSCRIPT_PACKAGE:-}" != libre-computer-archive-keyring ] && [ -e "$S/renaming" ]
+}
 case "$1" in
 	purge)
-		# the move's state (the pending marks, the old source files kept), unless the keyring's other name is
-		# installed or a migration is under way (migrate-pending / kernel-pending: a move only retried, on a board
-		# that never moved, is not work the other name takes over -- the rename happens only after a move): purging libretech-keyring during the rename (apt may purge it
-		# before it unpacks libre-computer-archive-keyring), or later from its config-files state, must not
-		# stop the migration or lose the originals
-		S=/var/lib/libre-computer-archive-keyring
-		# libre-computer-archive-keyring itself purged: nothing will ever take the work over
-		if [ "${DPKG_MAINTSCRIPT_PACKAGE:-}" = libre-computer-archive-keyring ] ||
-			{ [ ! -e /usr/lib/libre-computer-archive-keyring/libre-computer-migrate ] && [ ! -e "$S/migrate-pending" ] &&
-				[ ! -e "$S/kernel-pending" ]; }; then
+		# the state, unless the rename is under way or the other name, installed, still uses it
+		if ! renaming && { [ "${DPKG_MAINTSCRIPT_PACKAGE:-}" = libre-computer-archive-keyring ] ||
+			[ ! -e /usr/lib/libre-computer-archive-keyring/libre-computer-migrate ]; }; then
 			rm -rf "$S"
 		fi
 		;;
 	remove)
-		# the timer libre-computer-move enabled, unless another package still ships it or work is pending (the
-		# keyring's other name takes the unit over in a rename, maybe only after this removal: its retries
-		# must survive it)
-		S=/var/lib/libre-computer-archive-keyring
-		# libre-computer-archive-keyring itself removed (not the rename's old name): its link goes
-		if [ "${DPKG_MAINTSCRIPT_PACKAGE:-}" = libre-computer-archive-keyring ] ||
-			{ [ ! -e /usr/lib/systemd/system/libre-computer-migrate.timer ] && [ ! -e "$S/migrate-pending" ] &&
-				[ ! -e "$S/kernel-pending" ]; }; then
+		# the timer's link, unless the rename is under way or another package still ships the unit
+		if ! renaming && { [ "${DPKG_MAINTSCRIPT_PACKAGE:-}" = libre-computer-archive-keyring ] ||
+			[ ! -e /usr/lib/systemd/system/libre-computer-migrate.timer ]; }; then
 			rm -f /etc/systemd/system/timers.target.wants/libre-computer-migrate.timer
 			# and the loaded timer stopped, so it does not keep starting a script that is gone
 			if [ -d /run/systemd/system ]; then

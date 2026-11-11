@@ -675,5 +675,13 @@ install_keyring
 check "S46: stays on deb.libre.computer, says why, nothing written into the directory" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -z \"\$(ls -A '$mnt/etc/apt/sources.list.d/libre-computer.sources')\" && test ! -e '$mnt$S/migrate-pending' && grep -q 'is a directory' '$W/dpkg.log'"
 cleanup
 
+echo "== S47: the owner removes the self-contained libretech-keyring by hand mid-migration: its timer goes with it"
+deblibre_repo "$deblibre_keyring"
+setup_deblibre
+upgrade
+in_root env DEBIAN_FRONTEND=noninteractive dpkg -r libretech-keyring > "$W/s47.log" 2>&1
+check "S47: the timer's link is gone (no rename under way, nothing ships the unit)" bash -c "test ! -e '$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer' && test ! -e '$mnt/usr/lib/systemd/system/libre-computer-migrate.timer'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
