@@ -651,5 +651,15 @@ check "S43: the migration succeeds and leaves the orphan alone" bash -c "$(decla
 grep -q 'done: the board reads' "$W/s43.log" || { echo "   -- the migration's last lines:"; tail -n 20 "$W/s43.log" | sed 's/^/   | /'; }
 cleanup
 
+echo "== S44: libre-computer.sources is a symlink to a device (as to /dev/null, switched off), deb.libre.computer enabled elsewhere"
+setup
+# a device of the chroot's own (its /tmp is a private tmpfs), not the host's /dev/null the chroot binds
+mknod "$mnt/tmp/null-dev" c 1 3
+ln -s /tmp/null-dev "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+install_keyring
+check "S44: the device stays a device; the link replaced by the new source; the board moved" bash -c "test -c '$mnt/tmp/null-dev' && test -f '$mnt/etc/apt/sources.list.d/libre-computer.sources' && ! test -L '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending'"
+check "S44: the link itself kept in moved-sources" test -L "$mnt$S/moved-sources/libre-computer.sources"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

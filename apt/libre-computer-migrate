@@ -124,7 +124,7 @@ keep_mark() {
 	done
 }
 # OLD... less the unmarked ones
-marked() { for o in "$@"; do case $unmarked in *" $o "*) ;; *) printf '%s ' "$o" ;; esac; done; }
+marked() { for o in "$@"; do case $unmarked in *" $o "*) ;; *) printf ' %s' "$o" ;; esac; done; }
 
 # install_new NEW...: each attempt may remove only the old names of what it renames (an old name whose new
 # name is in this attempt or already installed), so a fallback install of one name cannot take another
@@ -248,6 +248,9 @@ fi
 # the old (transitional) one goes; until then the timer checks again, with no apt-get update. Its removal is
 # optional: a refusal keeps the transitional package, which only Depends on the new name
 waiting="" kgone=""
+# only on a board that moved: on the frozen repo the new kernel names never come, and waiting for them would
+# keep the timer running for good
+[ -e "$STATE/moved" ] || kpairs=""
 for p in $kpairs; do
 	o=${p%%:*} n=${p#*:}
 	[ "$(st "$o")" = installed ] || continue

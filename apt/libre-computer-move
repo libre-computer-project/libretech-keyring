@@ -137,7 +137,7 @@ sources_awk() { # MODE FILE
 		/^$/ { flush(); next }
 		/^#/ {
 			line[++n] = $0
-			if (tolower($0) ~ /^#+[[:space:]]*(types|uris|suites)[[:space:]]*:/) cent = 1
+			if (tolower($0) ~ /^#+[[:space:]]*((types|uris|suites)[[:space:]]*:|deb(-src)?[[:space:]])/) cent = 1
 			next
 		}
 		{
@@ -303,7 +303,9 @@ systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 # different Signed-By would make apt refuse every source. libre-computer.sources holding entries of its
 # own keeps them: ours in it are disabled and the new stanza added after them
 if [ $has_new = 0 ]; then
-	if [ ! -e "$SRC" ] || { [ "$(count other "$SRC")" -eq 0 ] && [ "$(count ours "$SRC")" -gt 0 ]; }; then
+	# a regular file (or a link to one) is read and kept; anything else there (a link to /dev/null, which
+	# switches a file off, a dangling link) is set aside as it is and the new file takes its name
+	if [ ! -f "$SRC" ] || { [ "$(count other "$SRC")" -eq 0 ] && [ "$(count ours "$SRC")" -gt 0 ]; }; then
 		stanza "$KEY" > "$T/src"
 	else
 		sources_awk disable "$SRC" > "$T/src"
@@ -311,25 +313,34 @@ if [ $has_new = 0 ]; then
 	fi
 	readable_before=0
 	apt-get -q indextargets >/dev/null 2>&1 && readable_before=1
-	src_backup=""
-	if [ -e "$SRC" ]; then
+	src_backup="" src_link=""
+	if [ -f "$SRC" ]; then
 		src_backup=$(backup "$SRC")
 		cp -p "$SRC" "$src_backup"
+	elif [ -L "$SRC" ]; then
+		src_link=$(backup "$SRC")
+		cp -P "$SRC" "$src_link"
 	fi
-	# into the file itself, or the file a symlink names (the link stays a link)
+	# into the file itself, or the regular file a symlink names (the link stays a link)
 	real_src=$SRC
-	[ ! -L "$SRC" ] || [ ! -e "$SRC" ] || real_src=$(readlink -f "$SRC")
+	[ ! -L "$SRC" ] || [ ! -f "$SRC" ] || real_src=$(readlink -f "$SRC")
 	# an existing file's mode and owner kept: the new content goes into a copy of it
-	[ ! -e "$real_src" ] || cp -p "$real_src" "$real_src.new"
+	[ ! -f "$real_src" ] || cp -p "$real_src" "$real_src.new"
 	cat "$T/src" > "$real_src.new"
 	# a new file readable to every user (apt as a normal user reads the sources), whatever the umask
-	[ -e "$real_src" ] || chmod 0644 "$real_src.new"
+	[ -f "$real_src" ] || chmod 0644 "$real_src.new"
 	mv "$real_src.new" "$real_src"
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
 	# this script does not recognise (another scheme, deb-src only, another Signed-By) can make apt refuse
 	# every source beside the new one. Then nothing has changed yet: the previous file comes back
 	if [ $readable_before = 1 ] && ! apt-get -q indextargets >"$T/after.log" 2>&1; then
-		if [ -n "$src_backup" ]; then cp -p "$src_backup" "$real_src"; else rm -f "$SRC"; fi
+		if [ -n "$src_backup" ]; then
+			cp -p "$src_backup" "$real_src"
+		elif [ -n "$src_link" ]; then
+			cp -P "$src_link" "$SRC.lc-new" && mv "$SRC.lc-new" "$SRC"
+		else
+			rm -f "$SRC"
+		fi
 		say "apt cannot read the sources with packages.libre.computer added beside the board's own entry for it; staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
 		grep -E '^(E|W):' "$T/after.log" | sed 's/^/  /' || true
 		exit 0
@@ -372,6 +383,7 @@ for f in $old; do
 	cat "$T/edited" > "$real.lc-new"
 	mv "$real.lc-new" "$real"
 done
+touch "$STATE/moved"
 retry_off
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
 
