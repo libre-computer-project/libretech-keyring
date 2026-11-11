@@ -958,7 +958,10 @@ install_keyring
 in_root dpkg --unpack "/tmp/${trans_keyring##*/}" > "$W/s66a.log" 2>&1
 check "S66: the precondition: libretech-keyring unpacked beside libre-computer-archive-keyring" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring | grep -qx unpacked"
 migrate s66.log
-check "S66: removed by the rename's removal run, never configured, the migration done" bash -c "! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring 2>/dev/null | grep -qvx 'not-installed\|config-files' && ! grep -q 'Setting up libretech-keyring' '$W/s66.log' && grep -q 'done: the board reads' '$W/s66.log'"
+# the renames' installs wait on it (part-done, not theirs to configure); the same run's removal takes it out
+check "S66: removed by the rename's removal run, never configured; the installs waited" bash -c "! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring 2>/dev/null | grep -qvx 'not-installed\|config-files' && ! grep -q 'Setting up libretech-keyring' '$W/s66.log' && grep -q 'part-done: *libretech-keyring' '$W/s66.log'"
+migrate s66b.log
+check "S66: the next run does the renames" grep -q 'done: the board reads' "$W/s66b.log"
 cleanup
 
 echo "== S67: the old kernel meta-package left unpacked (its postinst failed) beside the new one still goes"
