@@ -41,7 +41,10 @@ deblibre_keyring=$(find "$debs" -maxdepth 1 -name 'libretech-keyring_*~deb.libre
 # the migration unit installs these packages; a maintainer script that starts or restarts it waits on itself
 # (seen on a board: systemctl start libre-computer-migrate.service inside its own apt-get, never returning)
 for k in "$new_keyring" "$deblibre_keyring"; do
-	check "S0: $(basename "$k")'s maintainer scripts never start the migration unit" bash -c "! dpkg-deb --ctrl-tarfile '$k' | tar -xO 2>/dev/null | grep -E '(deb-systemd-invoke|systemctl).*(start|restart).*libre-computer-migrate|_dh_action=(re)?start'"
+	# (the service: a start from inside apt waits on the running unit for ever; the timer may be started, never
+	# waiting on it)
+	check "S0: $(basename "$k")'s maintainer scripts never start the migration service" bash -c "! dpkg-deb --ctrl-tarfile '$k' | tar -xO 2>/dev/null | grep -E '(deb-systemd-invoke|systemctl).*(start|restart).*libre-computer-migrate(\\.service)?([^.a-z]|\$)|_dh_action=(re)?start'"
+	check "S0: $(basename "$k")'s maintainer scripts start nothing without --no-block" bash -c "! dpkg-deb --ctrl-tarfile '$k' | tar -xO 2>/dev/null | grep -E 'systemctl[^|;]* (start|restart) ' | grep -v -- '--no-block'"
 done
 
 # --- the local repository: stand-ins for the new names, signed by a throwaway key -------------------
@@ -846,6 +849,54 @@ cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
 echo 'deb [signed-by=/usr/share/keyrings/own-copy.gpg] file:///srv//test-repo trixie main' > "$mnt/etc/apt/sources.list.d/mine.list"
 LCKEY= install_keyring
 check "S57: the board moves on its own entry: no second source written" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/migrate-pending'"
+cleanup
+
+echo "== S58: the migration's wait for other apt and dpkg runs (apt-get check) really waits on dpkg's lock"
+setup
+# a lock on the chroot's lock-frontend, as a running dpkg or apt holds it (fcntl, from outside: the same file)
+python3 -c 'import fcntl, sys, time; f = open(sys.argv[1], "w"); fcntl.lockf(f, fcntl.LOCK_EX); time.sleep(20)' "$mnt/var/lib/dpkg/lock-frontend" &
+lockpid=$!
+sleep 2
+in_root apt-get -q check > "$W/s58.log" 2>&1
+wait "$lockpid"
+check "S58: apt-get check reports the held lock (the message is_locked reads)" grep -qiE 'could not get lock|lock (was|is) locked by' "$W/s58.log"
+cleanup
+
+echo "== S59: a rename a stop cut short after apt took the old name: the next run installs the new one, with the old mark"
+setup
+install_keyring
+in_root apt-mark auto libretech-gpio >/dev/null 2>&1
+# what the stopped run left: its record, the old name gone, the new one never unpacked
+echo auto > "$mnt$S/pending-libre-computer-gpio"
+in_root env DEBIAN_FRONTEND=noninteractive dpkg -r libretech-dtoverlay libretech-gpio > "$W/s59a.log" 2>&1
+migrate s59.log
+check "S59: libre-computer-gpio installed and automatic, the record gone" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-gpio && chroot '$mnt' apt-mark showauto | grep -qx libre-computer-gpio && test ! -e '$mnt$S/pending-libre-computer-gpio'"
+cleanup
+
+echo "== S60: dpkg left interrupted by someone else: the migration neither configures it nor takes it for its own"
+setup
+install_keyring
+# an interrupted dpkg: an entry in its journal
+mkdir -p "$mnt/var/lib/dpkg/updates"
+: > "$mnt/var/lib/dpkg/updates/0000"
+migrate s60.log
+check "S60: no unfinished mark, the journal left as it was" bash -c "test ! -e '$mnt$S/unfinished' && test -e '$mnt/var/lib/dpkg/updates/0000'"
+rm -f "$mnt/var/lib/dpkg/updates/0000"
+cleanup
+
+echo "== S61: a rename that never began (its old name held) leaves no record behind"
+setup
+in_root apt-mark hold libretech-alsa-ucm-conf >/dev/null 2>&1
+install_keyring
+migrate s61.log
+check "S61: alsa kept, no pending record for its new name" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-alsa-ucm-conf && test ! -e '$mnt$S/pending-alsa-ucm-conf-libre-computer'"
+cleanup
+
+echo "== S62: an entry whose path differs from packages.libre.computer's only in case is another repository"
+setup
+echo 'deb [signed-by=/usr/share/keyrings/libre-computer-deb.gpg] file:///srv/TEST-REPO trixie main' > "$mnt/etc/apt/sources.list.d/other-case.list"
+install_keyring
+check "S62: the shipped stanza written (the other-case entry not taken for the board's own)" bash -c "grep -qx 'URIs: file:///srv/test-repo' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending'"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"

@@ -18,8 +18,10 @@ URI=${LC_PACKAGES_URI:-https://packages.libre.computer/deb}
 KEY=/usr/share/keyrings/libre-computer-deb.gpg
 PROBE_KEY=${LC_PACKAGES_KEY:-$KEY}
 # the repository without its scheme and its leading and trailing slashes: an entry naming it over http or https,
-# or as file:/ for file:///, is the same repository to apt; compared whole (.../deb-testing is another one)
-URIN=$(printf '%s' "$URI" | tr 'A-Z' 'a-z' | sed -E 's#^[a-z][a-z0-9+.-]*:##; s#^/+##; s#/+$##; s#/+#/#g')
+# or as file:/ for file:///, is the same repository to apt; compared whole (.../deb-testing is another one), the
+# host in any case and the path as written (a server's paths are case-sensitive)
+URIN=$(printf '%s' "$URI" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*:##; s#^/+##; s#/+$##; s#/+#/#g')
+URIN=$(printf '%s' "${URIN%%/*}" | tr 'A-Z' 'a-z')${URIN#"${URIN%%/*}"}
 # the main list and the parts directory apt reads (a board may set them elsewhere)
 SL=/etc/apt/sources.list SP=/etc/apt/sources.list.d
 eval "$(apt-config shell SL Dir::Etc::sourcelist/f SP Dir::Etc::sourceparts/d 2>/dev/null)" || true
@@ -43,11 +45,13 @@ list_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
 		# (a path naming it first -- a caching proxy, or a local mirror of the frozen repo -- counts too)
 		# the path after a caching proxy host, its HTTPS/// (the apt-cacher-ng form for an https repo) taken off
-		function proxied(u) {
-			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
+		# (the host it names in any case, the path as written: paths on a server are case-sensitive)
+		function proxied(u,   i) {
+			sub(/^[A-Za-z][A-Za-z0-9+.-]*:\/*/, "", u)
 			if (!index(u, "/")) return ""
-			u = substr(u, index(u, "/") + 1); sub(/^\/+/, "", u); sub(/^https?\/+/, "", u); sub(/\/+$/, "", u); gsub(/\/+/, "/", u)
-			return u
+			u = substr(u, index(u, "/") + 1); sub(/^\/+/, "", u); sub(/^[Hh][Tt][Tt][Pp][Ss]?\/+/, "", u); sub(/\/+$/, "", u); gsub(/\/+/, "/", u)
+			i = index(u, "/")
+			return i ? tolower(substr(u, 1, i - 1)) substr(u, i) : tolower(u)
 		}
 		function isours(u,   p, h, r) {
 			r = proxied(u)
@@ -56,12 +60,13 @@ list_awk() { # MODE FILE
 			split(r, p, "/")
 			return h == "deb.libre.computer" || p[1] == "deb.libre.computer"
 		}
+		# (the host in any case, the path as written)
 		function norm(u,   p, h, r) {
-			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u)
+			sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u)
 			h = u; r = ""
 			if (index(u, "/")) { h = substr(u, 1, index(u, "/") - 1); r = substr(u, index(u, "/")) }
 			sub(/^.*@/, "", h); sub(/:[0-9]+$/, "", h); gsub(/\/+/, "/", r)
-			return h r
+			return tolower(h) r
 		}
 		# the new repository, directly or through a caching proxy whose path names it first
 		function isnew(u) { return norm(u) == new || proxied(u) == new }
@@ -110,11 +115,13 @@ sources_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
 		# (a path naming it first -- a caching proxy, or a local mirror of the frozen repo -- counts too)
 		# the path after a caching proxy host, its HTTPS/// (the apt-cacher-ng form for an https repo) taken off
-		function proxied(u) {
-			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
+		# (the host it names in any case, the path as written: paths on a server are case-sensitive)
+		function proxied(u,   i) {
+			sub(/^[A-Za-z][A-Za-z0-9+.-]*:\/*/, "", u)
 			if (!index(u, "/")) return ""
-			u = substr(u, index(u, "/") + 1); sub(/^\/+/, "", u); sub(/^https?\/+/, "", u); sub(/\/+$/, "", u); gsub(/\/+/, "/", u)
-			return u
+			u = substr(u, index(u, "/") + 1); sub(/^\/+/, "", u); sub(/^[Hh][Tt][Tt][Pp][Ss]?\/+/, "", u); sub(/\/+$/, "", u); gsub(/\/+/, "/", u)
+			i = index(u, "/")
+			return i ? tolower(substr(u, 1, i - 1)) substr(u, i) : tolower(u)
 		}
 		function isours(u,   p, h, r) {
 			r = proxied(u)
@@ -123,12 +130,13 @@ sources_awk() { # MODE FILE
 			split(r, p, "/")
 			return h == "deb.libre.computer" || p[1] == "deb.libre.computer"
 		}
+		# (the host in any case, the path as written)
 		function norm(u,   p, h, r) {
-			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u)
+			sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u)
 			h = u; r = ""
 			if (index(u, "/")) { h = substr(u, 1, index(u, "/") - 1); r = substr(u, index(u, "/")) }
 			sub(/^.*@/, "", h); sub(/:[0-9]+$/, "", h); gsub(/\/+/, "/", r)
-			return h r
+			return tolower(h) r
 		}
 		# the new repository, directly or through a caching proxy whose path names it first
 		function isnew(u) { return norm(u) == new || proxied(u) == new }

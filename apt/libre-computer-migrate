@@ -27,7 +27,9 @@ export LC_ALL=C
 # which the removal guard refuses, so no rename would ever go in
 # and no Suggests (a board may set Install-Suggests): a rename adds nothing the board did not have
 GUARD=/usr/lib/libre-computer-archive-keyring/libre-computer-rename-guard
-APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o APT::Install-Suggests=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
+# and no ConfigurePending: apt's closing dpkg --configure --pending would configure packages someone else left
+# unpacked (apt configures what it installs itself)
+APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o APT::Install-Suggests=false -o DPkg::ConfigurePending=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
 W=$(mktemp -d)
 # the "renaming" mark is held only while an apt run of the renames is under way (safe_apt): the old package's
 # postrm then keeps the timer and the state for the rename; any other time, a removal is the owner's.
@@ -39,6 +41,9 @@ trap 'rm -rf "$W"; rm -f "$STATE/renaming"' EXIT
 trap 'say "stopping after the step that was running"; exit 1' TERM
 # "installed" if any architecture of PACKAGE is installed (dpkg-query prints one line per installed arch)
 st() { ! dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx installed || echo installed; }
+# pr PACKAGE: true if any architecture of it is on the board in any state but removed (installed, or left
+# unpacked, half-configured -- as an old keyring deconfigured by keyring_swap is)
+pr() { dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null | grep -qvxE 'not-installed|config-files'; }
 
 # old name -> new name (the package-naming policy's table). kpairs: kernel meta-packages, never installed
 # here
@@ -67,19 +72,39 @@ wait_lock() {
 		sleep 30
 	done
 }
-# idle: wait (as wait_lock does) until no other apt or dpkg runs. A root apt-get -s takes apt's and dpkg's
-# locks and changes nothing (dpkg left half-done by someone else makes it fail at once: then nothing to wait for)
-# shellcheck disable=SC2086
-idle() { wait_lock $APT -s install || true; }
+# idle: wait (as wait_lock does) until no other apt or dpkg runs. apt-get check opens the cache as an install
+# would, taking apt's and dpkg's locks, and changes nothing (a simulation, -s, takes no lock at all). dpkg left
+# half-done by someone else makes it fail at once: then there is nothing to wait for
+idle() { wait_lock apt-get -q check || true; }
 
 # safe_apt ARGS: apt-get ARGS, only if its plan removes nothing but the names in $allow (set by the caller). The plan is read
 # again before every attempt: while a lock is held, another apt may change what this one would do
+# run_begin / run_end RC: around each run of this script's that changes dpkg's state (apt's, or keyring_swap's
+# dpkg), its output in $W/out. "renaming": this boot, this script's pid and its start time (a pid can be reused
+# in the same boot), so a mark a power loss or a kill left is not a rename under way -- "-" for a value it cannot
+# read, as the postrm reads them (the start time: the 20th field after the ") " that ends the command name in
+# stat). "unfinished": what the run leaves half-done in dpkg (a power loss, a kill, a dpkg error) is ours to
+# finish; it goes only when no run of this one's has failed past its start since it was set
+run_begin() {
+	mkdir -p "$STATE"
+	bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+	bst=$(sed 's/.*) //' "/proc/$$/stat" 2>/dev/null | cut -d' ' -f20 || true)
+	echo "${bid:--} $$ ${bst:--}" > "$STATE/renaming"
+	touch "$STATE/unfinished"
+}
+run_end() {
+	rm -f "$STATE/renaming"
+	# a failure that came before dpkg ran (a lock, the guard, or dpkg left interrupted by someone else, which
+	# apt and dpkg check when they take the lock) left nothing of ours half-done; any other may have
+	[ "$1" = 0 ] || is_locked || grep -qE '^libre-computer-rename-guard: |dpkg was interrupted' "$W/out" || broke=1
+	[ $broke = 1 ] || rm -f "$STATE/unfinished"
+}
 safe_apt() {
 	si=0 replanned=0
 	while :; do
 		if ! $APT -s "$@" >"$W/plan" 2>&1; then
-			# another apt may have started since dpkg was free (a root apt-get -s takes the lock): wait for it,
-			# then plan once more
+			# another apt may be part-way through (a simulation takes no lock and reads what that one is
+			# writing): wait for it, then plan once more
 			if [ $replanned = 0 ]; then
 				replanned=1
 				idle
@@ -98,30 +123,17 @@ safe_apt() {
 			say "'apt-get $*' would also remove$bad; not done, nothing changed (will retry)"
 			return 1
 		fi
-		mkdir -p "$STATE"
-		# this boot and this script's pid: a mark a power loss or a kill left is not a rename under way
-		# and its start time (a pid can be reused in the same boot) -- "-" for a value it cannot read, as the
-		# postrm reads them (the start time: the 20th field after the ") " that ends the command name in stat)
-		bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
-		bst=$(sed 's/.*) //' "/proc/$$/stat" 2>/dev/null | cut -d' ' -f20 || true)
-		echo "${bid:--} $$ ${bst:--}" > "$STATE/renaming"
-		# and "unfinished": what this run leaves half-done in dpkg (a power loss, a kill, a dpkg error) is ours
-		# to finish; it goes only when no run of this script's has failed since it was set
-		touch "$STATE/unfinished"
+		run_begin
 		# shellcheck disable=SC2086
 		# the same guard inside apt's run (its plan then final, its locks held): another apt may have changed
 		# the board since the plan above
 		if LC_RENAME_ALLOW="$allow" $APT -o "DPkg::Pre-Install-Pkgs::=$GUARD" -o "DPkg::Tools::Options::$GUARD::Version=2" \
 			"$@" >"$W/out" 2>&1; then
-			rm -f "$STATE/renaming"
-			[ $broke = 1 ] || rm -f "$STATE/unfinished"
+			run_end 0
 			cat "$W/out"
 			return 0
 		fi
-		rm -f "$STATE/renaming"
-		# a lock or the guard refused it before dpkg ran; any other failure may have left dpkg half-done
-		is_locked || grep -q '^libre-computer-rename-guard: ' "$W/out" || broke=1
-		[ $broke = 1 ] || rm -f "$STATE/unfinished"
+		run_end 1
 		if is_locked && [ $si -lt 240 ]; then
 			si=$((si + 1))
 			sleep 30
@@ -154,8 +166,8 @@ keep_mark() {
 		o=${p%%:*} n=${p#*:}
 		# the old name's mark, from this run's snapshot; or, its old name gone before this run (an earlier run
 		# stopped between the install and here), the one that run recorded before the install (pending-NEW)
-		# (a record whose new name is not in is dropped: no install of ours to give a mark to)
-		if [ "$(st "$n")" != installed ]; then rm -f "$STATE/pending-$n"; continue; fi
+		# (a record whose new name is not in yet stays: the rename it records goes on)
+		[ "$(st "$n")" = installed ] || continue
 		case $had in
 			*" $o "*)
 				case $autos in *" $o "*) m=auto ;; *) m=manual ;; esac
@@ -194,6 +206,34 @@ install_new() {
 	done
 	safe_apt install --no-install-recommends "$@"
 }
+# keyring_swap: libretech-keyring -> libre-computer-archive-keyring, by dpkg itself. apt would remove
+# libretech-keyring (its key, this script, the guard, the timer) before unpacking its replacement, and a stop in
+# between would leave the board with neither and nothing to try again. dpkg unpacking the new package over the
+# old (Replaces) takes each file over in place; the old one, deconfigured (its Breaks), keeps only its
+# documentation and goes with the removals below. The package is fetched by apt (checked against the signed
+# index) and has no dependencies; nothing else can go: dpkg removes only a package whose every file is taken
+keyring_swap() {
+	rm -rf "$W/dl"
+	mkdir "$W/dl"
+	! id _apt >/dev/null 2>&1 || chown _apt "$W/dl"
+	if ! (cd "$W/dl" && wait_lock apt-get -q download libre-computer-archive-keyring); then
+		say "could not fetch libre-computer-archive-keyring; will retry:"
+		tail -n 5 "$W/out" | sed 's/^/  /'
+		return 1
+	fi
+	set -- "$W/dl"/libre-computer-archive-keyring_*.deb
+	[ -f "$1" ] || { say "apt fetched no libre-computer-archive-keyring; will retry"; return 1; }
+	run_begin
+	if wait_lock dpkg --auto-deconfigure --force-confold --force-confdef -i "$1"; then
+		run_end 0
+		return 0
+	fi
+	run_end 1
+	say "dpkg could not install libre-computer-archive-keyring; will retry:"
+	tail -n 15 "$W/out" | sed 's/^/  /'
+	return 1
+}
+
 # remove OLD...: together, or each on its own when apt refuses that (one held or refused name keeps only
 # itself), in passes while a pass takes one out (a name may go only after another that depends on it); each
 # attempt may remove only the names it was given. (Its own names ro/rprog, as install_new's)
@@ -205,10 +245,10 @@ remove_old() {
 	while [ $rprog = 1 ]; do
 		rprog=0
 		for ro in "$@"; do
-			[ "$(st "$ro")" = installed ] || continue
+			pr "$ro" || continue
 			allow=" $ro "
 			safe_apt remove "$ro" || true
-			[ "$(st "$ro")" = installed ] || rprog=1
+			pr "$ro" || rprog=1
 		done
 	done
 }
@@ -233,7 +273,8 @@ if [ -e "$STATE/unfinished" ]; then
 	else
 		say "dpkg --configure -a failed; will retry:"
 		tail -n 15 "$W/out" | sed 's/^/  /'
-		failed=1 dpkg_broken=1
+		# (still ours to finish: no later step of this run may clear the mark)
+		failed=1 dpkg_broken=1 broke=1
 	fi
 else
 	idle
@@ -256,20 +297,34 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 		say "packages.libre.computer's package lists are not here (no network, or a clock behind the repository's date); will retry"
 	else
 
+		# the new names to install: an old name's on the board, or one whose rename an earlier run began
+		# (pending-NEW) and a stop cut short after apt had taken the old name and before the new one was in
 		new=""
 		for p in $pairs; do
 			o=${p%%:*} n=${p#*:}
-			[ "$(st "$o")" != installed ] || [ "$(st "$n")" = installed ] || new="$new $n"
+			[ "$(st "$n")" != installed ] || continue
+			pr "$o" || [ -s "$STATE/pending-$n" ] || continue
+			new="$new $n"
 		done
 		if [ -n "$new" ]; then
 			say "installing$new (in place of their old names)"
-			# each new name's mark-to-be, recorded before apt takes the old names: keep_mark below sets it, or the
-			# next run does if this one stops in between (then the old name is gone from its snapshot)
+			# each new name's mark-to-be, recorded before apt takes the old names (a record an earlier run left,
+			# its old name gone, is kept): keep_mark below sets it, or the next run does if this one stops in
+			# between (then the old name is gone from its snapshot). It also marks the rename as begun
 			for p in $pairs; do
 				o=${p%%:*} n=${p#*:}
 				case "$new " in *" $n "*) ;; *) continue ;; esac
+				pr "$o" || continue
 				case $autos in *" $o "*) echo auto ;; *) echo manual ;; esac > "$STATE/pending-$n"
 			done
+			# the keyring by dpkg itself (keyring_swap), never by apt
+			case "$new " in
+				*" libre-computer-archive-keyring "*)
+					keyring_swap || true
+					new=$(echo " $new " | sed 's/ libre-computer-archive-keyring / /; s/^ *//; s/ *$//') ;;
+			esac
+		fi
+		if [ -n "$new" ]; then
 			# a rename adds nothing the board did not have: not the new packages' Recommends (dtoverlay's i2c-tools,
 			# spi-tools; xorg's xserver-xorg), which an owner may have left out on purpose. All in one step (their
 			# dependencies on one another resolve together); if apt refuses that, each on its own, so one name
@@ -289,12 +344,18 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 				done
 			fi
 		fi
-		# an old name its new one did not displace (a transitional package, which only Depends on the new name)
-		# goes once the new name is in, the new name keeping the old one's mark
+		# a rename that never began (its new name not in, its old one still here: refused, held, missing) has
+		# no record left to it: one the next run finds is a rename a stop cut short
+		for p in $pairs; do
+			o=${p%%:*} n=${p#*:}
+			[ "$(st "$n")" != installed ] && pr "$o" && rm -f "$STATE/pending-$n" || true
+		done
+		# an old name its new one did not displace (a transitional package, which only Depends on the new name;
+		# the keyring keyring_swap deconfigured) goes once the new name is in, the new name keeping the old mark
 		gone=""
 		for p in $pairs; do
 			o=${p%%:*} n=${p#*:}
-			[ "$(st "$o")" != installed ] || [ "$(st "$n")" != installed ] || gone="$gone $o"
+			pr "$o" && [ "$(st "$n")" = installed ] && gone="$gone $o" || true
 		done
 		# shellcheck disable=SC2086
 		keep_mark $pairs
@@ -308,10 +369,15 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 			# shellcheck disable=SC2086
 			keep_mark $pairs
 		fi
+		# left: an old name still here, or a rename begun and not finished (its new name not in)
 		left=""
 		for p in $pairs; do
-			o=${p%%:*}
-			[ "$(st "$o")" != installed ] || left="$left $o"
+			o=${p%%:*} n=${p#*:}
+			if pr "$o"; then
+				left="$left $o"
+			elif [ -s "$STATE/pending-$n" ] && [ "$(st "$n")" != installed ]; then
+				left="$left $o"
+			fi
 		done
 		# a name still under its old one is retried; the kernel step below runs either way
 		if [ -n "$left" ]; then
