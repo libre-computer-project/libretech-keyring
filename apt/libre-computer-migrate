@@ -25,7 +25,8 @@ export LC_ALL=C
 # its timeout to each of wait_lock's retries)
 # no AutomaticRemove: a board that sets it would have every attempt also remove what nothing needs any more,
 # which the removal guard refuses, so no rename would ever go in
-APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
+# and no Suggests (a board may set Install-Suggests): a rename adds nothing the board did not have
+APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o APT::Install-Suggests=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 # a stop (shutdown) while apt or dpkg runs: the shell runs this once that command has finished, so dpkg is

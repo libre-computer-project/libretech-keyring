@@ -668,5 +668,12 @@ install_keyring
 check "S45: the file is set aside and the board moved" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/migrate-pending'"
 cleanup
 
+echo "== S46: libre-computer.sources is a directory: nothing moves into it, the board stays"
+setup
+mkdir -p "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+install_keyring
+check "S46: stays on deb.libre.computer, says why, nothing written into the directory" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -z \"\$(ls -A '$mnt/etc/apt/sources.list.d/libre-computer.sources')\" && test ! -e '$mnt$S/migrate-pending' && grep -q 'is a directory' '$W/dpkg.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

@@ -20,7 +20,11 @@ PROBE_KEY=${LC_PACKAGES_KEY:-$KEY}
 # the repository without its scheme and its leading and trailing slashes: an entry naming it over http or https,
 # or as file:/ for file:///, is the same repository to apt; compared whole (.../deb-testing is another one)
 URIN=$(printf '%s' "$URI" | tr 'A-Z' 'a-z' | sed -E 's#^[a-z][a-z0-9+.-]*:##; s#^/+##; s#/+$##')
-SRC=/etc/apt/sources.list.d/libre-computer.sources
+# the main list and the parts directory apt reads (a board may set them elsewhere)
+SL=/etc/apt/sources.list SP=/etc/apt/sources.list.d
+eval "$(apt-config shell SL Dir::Etc::sourcelist/f SP Dir::Etc::sourceparts/d 2>/dev/null)" || true
+SP=${SP%/}
+SRC=$SP/libre-computer.sources
 STATE=/var/lib/libre-computer-archive-keyring
 PKG=${DPKG_MAINTSCRIPT_PACKAGE:-}
 if [ -z "$PKG" ]; then
@@ -197,7 +201,7 @@ exec 9>"$STATE/.move.lock"
 flock 9
 
 old="" has_new=0 newfiles=""
-for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+for f in "$SL" "$SP"/*.list "$SP"/*.sources; do
 	[ -f "$f" ] || continue
 	# only a file apt reads: it skips a name with any character outside letters, digits, _ - . : (so no
 	# name with a space reaches the loops below)
@@ -247,6 +251,11 @@ stanza() { # KEY: the new source's stanza
 # the shipped stanza is not needed: an http-only path is fine for an http entry). apt itself updates the new
 # source alone into scratch lists (apt's proxy settings apply; it checks the signature, and the Release
 # date against the board's clock). A proxy or an egress allowlist can admit only the old host
+if [ $has_new = 0 ] && [ -d "$SRC" ]; then
+	say "$SRC is a directory; the new source cannot take its name; staying on deb.libre.computer"
+	retry_off
+	exit 0
+fi
 if [ $has_new = 0 ]; then
 	mkdir -p "$T/parts" "$T/lists/partial" "$T/cache/archives/partial"
 	! id _apt >/dev/null 2>&1 || chown _apt "$T/lists/partial" "$T/cache/archives/partial"
@@ -343,7 +352,7 @@ if [ $has_new = 0 ]; then
 	cat "$T/src" > "$real_src.new"
 	# a new file readable to every user (apt as a normal user reads the sources), whatever the umask
 	[ -f "$real_src" ] || chmod 0644 "$real_src.new"
-	mv "$real_src.new" "$real_src"
+	mv -T "$real_src.new" "$real_src"
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
 	# this script does not recognise (another scheme, deb-src only, another Signed-By) can make apt refuse
 	# every source beside the new one. Then nothing has changed yet: the previous file comes back
@@ -370,7 +379,7 @@ for f in $old; do
 	# libre-computer.sources was rewritten in step 1, unless the board already had the new source
 	[ $has_new = 1 ] || [ "$f" != "$SRC" ] || continue
 	case $f in
-		/etc/apt/sources.list) whole=0 ;;
+		"$SL") whole=0 ;;
 		*) [ "$(count other "$f")" -eq 0 ] && whole=1 || whole=0 ;;
 	esac
 	if [ $whole = 1 ]; then

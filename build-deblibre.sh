@@ -47,14 +47,17 @@ if [[ -z $below ]]; then
 fi
 # and above the libretech-keyring deb.libre.computer serves now, or no board would take it as an upgrade
 if [[ -z $above ]]; then
-	for a in arm64 armhf amd64; do
-		v=$(curl -fsSL "https://deb.libre.computer/repo/dists/linux/main/binary-$a/Packages.gz" | gzip -dc |
-			awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}') ||
-			{ echo "could not read deb.libre.computer $a; pass --above" >&2; exit 1; }
+	# every suite deb.libre.computer serves (its Release files list them); the highest version in any
+	suites=$(curl -fsSL "https://deb.libre.computer/repo/dists/" | grep -o 'href="[a-z0-9-]*/"' | sed 's/href="//; s#/"##') ||
+		{ echo "could not list deb.libre.computer's suites; pass --above" >&2; exit 1; }
+	[[ -n $suites ]] || { echo "deb.libre.computer lists no suite; pass --above" >&2; exit 1; }
+	for s in $suites; do for a in arm64 armhf amd64; do
+		v=$(curl -fsSL "https://deb.libre.computer/repo/dists/$s/main/binary-$a/Packages.gz" 2>/dev/null | gzip -dc 2>/dev/null |
+			awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}') || v=""
 		for x in $v; do
 			[[ -z $above ]] || dpkg --compare-versions "$x" gt "$above" && above=$x
 		done
-	done
+	done; done
 	[[ -n $above ]] || { echo "deb.libre.computer lists no libretech-keyring; pass --above" >&2; exit 1; }
 fi
 dpkg --compare-versions "${version}~deb.libre.computer" gt "$above" ||
