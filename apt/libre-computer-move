@@ -137,7 +137,7 @@ sources_awk() { # MODE FILE
 			# Enabled: the whole field, continuation lines included; false as apt reads it
 			if (ev != "") {
 				sub(/^[[:space:]]+/, "", ev); sub(/[[:space:]]+$/, "", ev)
-				off = (ev ~ /^(no|false|without|off|disable|[+-]?(0[xX])?0+)$/)
+				off = (ev ~ /^(no|false|without|off|disable|[+-]?(0[xXbB])?0+)$/)
 			}
 			v = uris; sub(/^[^:]*:/, "", v)
 			ntok = split(v, t, /[[:space:]]+/); keep = ""; libre = 0; oth = 0

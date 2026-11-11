@@ -55,7 +55,8 @@ if [[ -z $above ]]; then
 	suites=$(curl -fsSL "https://deb.libre.computer/repo/dists/" | grep -o 'href="[^"/]*/"' | sed 's/href="//; s#/"##' |
 		grep -vx '\.\.\?') || { echo "could not list deb.libre.computer's suites; pass --above" >&2; exit 1; }
 	[[ -n $suites ]] || { echo "deb.libre.computer lists no suite; pass --above" >&2; exit 1; }
-	for s in $suites; do for a in arm64 armhf amd64; do
+	# binary-all too, where a suite publishes it: an Architecture: all package may sit only there
+	for s in $suites; do for a in arm64 armhf amd64 all; do
 		# a suite that does not carry this architecture is skipped; one whose Release or index cannot be read
 		# refuses (the Release read whole first: grep -q on a pipe can end it early, which pipefail calls a failure)
 		rel=$(curl -fsSL "https://deb.libre.computer/repo/dists/$s/Release") ||
