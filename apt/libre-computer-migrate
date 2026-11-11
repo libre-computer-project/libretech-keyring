@@ -34,7 +34,8 @@ olds=" $(for p in $pairs; do printf '%s ' "${p%%:*}"; done)"
 kolds=" $(for p in $kpairs; do printf '%s ' "${p%%:*}"; done)"
 allow=$olds
 
-# run CMD..., waiting while another apt or dpkg holds a lock it needs (up to 30 min), output in $W/out
+# run CMD..., waiting while another apt or dpkg holds a lock it needs (up to 2 h: the apt run that installed
+# this package may still be going, with a kernel and its initramfs), output in $W/out
 wait_lock() {
 	i=0
 	while :; do
@@ -42,7 +43,7 @@ wait_lock() {
 		# apt: "Could not get lock ..."; dpkg: "dpkg frontend lock was locked by <program> process with pid N"
 		# (older: "by another process"), "dpkg status database is locked by another process"
 		if grep -qiE 'could not get lock|lock (was|is) locked by|database is locked' "$W/out" &&
-			[ $i -lt 60 ]; then
+			[ $i -lt 240 ]; then
 			i=$((i + 1))
 			sleep 30
 			continue
@@ -87,8 +88,30 @@ safe_apt() {
 		say "'apt-get $*' would also remove$bad; not done, nothing changed (will retry)"
 		return 1
 	fi
+	# the run itself waits for every lock it needs too: DPkg::Lock::Timeout covers dpkg's, not the download
+	# directory's (/var/cache/apt/archives/lock, held by apt-daily's download just after boot)
 	# shellcheck disable=SC2086
-	$APT "$@"
+	if wait_lock $APT "$@"; then cat "$W/out"; return 0; fi
+	cat "$W/out"
+	return 1
+}
+
+# the old names installed when the migration started, and which of them apt had marked automatically
+# installed: each new name takes its old name's mark. A new name pulled in as a dependency of its old
+# (transitional) one is marked automatic; once the old one is removed, autoremove would take it -- the kernel
+# meta-package, or the keyring whose key every Libre Computer source line names
+had=" $(for p in $pairs $kpairs; do o=${p%%:*}; [ "$(st "$o")" != installed ] || printf '%s ' "$o"; done)"
+autos=" $(apt-mark showauto 2>/dev/null | tr '\n' ' ') "
+keep_mark() { # PAIRS: each installed new name gets its old name's mark
+	for p in "$@"; do
+		o=${p%%:*} n=${p#*:}
+		case $had in *" $o "*) ;; *) continue ;; esac
+		[ "$(st "$n")" = installed ] || continue
+		case $autos in
+			*" $o "*) wait_lock apt-mark auto "$n" || true ;;
+			*) wait_lock apt-mark manual "$n" || true ;;
+		esac
+	done
 }
 
 new=""
@@ -119,10 +142,17 @@ for p in $pairs; do
 		gone="$gone $o"
 	fi
 done
+# shellcheck disable=SC2086
+keep_mark $pairs
 if [ -n "$gone" ]; then
 	say "removing$gone (their libre-computer names are installed)"
+	# together, or each on its own when apt refuses that: one held or refused name keeps only itself
 	# shellcheck disable=SC2086
-	safe_apt remove $gone || true
+	if ! safe_apt remove $gone; then
+		for o in $gone; do
+			[ "$(st "$o")" != installed ] || safe_apt remove "$o" || true
+		done
+	fi
 fi
 # an old kernel meta-package, once the owner's upgrade has put its new name in. Optional: a refusal keeps
 # it (it is a transitional package that only Depends on the new name) and the migration still finishes
@@ -135,6 +165,8 @@ for p in $kpairs; do
 done
 if [ -n "$kgone" ]; then
 	say "removing$kgone (their new names are installed)"
+	# shellcheck disable=SC2086
+	keep_mark $kpairs
 	allow=$kolds
 	# shellcheck disable=SC2086
 	safe_apt remove $kgone || say "keeping$kgone"

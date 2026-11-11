@@ -423,5 +423,33 @@ grep -q 'still installed under an old name: libretech-alsa-ucm-conf' "$W/s21.log
 	{ echo "   -- the migration's last lines:"; tail -n 20 "$W/s21.log" | sed 's/^/   | /'; }
 cleanup
 
+echo "== S22: a new name apt marked automatic (pulled in by its transitional old name): autoremove keeps it"
+setup
+install_keyring
+in_root apt-mark auto libre-computer-archive-keyring >/dev/null 2>&1
+migrate s22.log
+check "S22: the migration succeeds" grep -q 'done: the board reads' "$W/s22.log"
+check "S22: autoremove would not remove libre-computer-archive-keyring (it took libretech-keyring's manual mark)" bash -c "! chroot '$mnt' apt-get -s autoremove 2>/dev/null | grep -q '^Remv libre-computer-archive-keyring'"
+cleanup
+
+echo "== S23: a CRLF .sources file: another repository's stanza, then ours"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+printf 'Types: deb\r\nURIs: file:///srv/other\r\nSuites: trixie\r\nComponents: main\r\n\r\nTypes: deb\r\nURIs: https://deb.libre.computer/repo\r\nSuites: linux\r\nComponents: main\r\n' > "$mnt/etc/apt/sources.list.d/crlf.sources"
+install_keyring
+check "S23: the file stays, the other stanza in it, ours disabled" bash -c "grep -q 'srv/other' '$mnt/etc/apt/sources.list.d/crlf.sources' && awk 'BEGIN{RS=\"\"} /deb\\.libre\\.computer/ && /Enabled: no/ {a=1} END{exit !a}' '$mnt/etc/apt/sources.list.d/crlf.sources'"
+check "S23: apt reads every source" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null indextargets
+cleanup
+
+echo "== S24: one stanza naming deb.libre.computer and packages.libre.computer for the board's suite, its own key"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo file:///srv/test-repo\nSuites: trixie\nComponents: main\nSigned-By: /usr/share/keyrings/own-copy.gpg\n' > "$mnt/etc/apt/sources.list.d/both.sources"
+install_keyring
+check "S24: no second source (it would conflict on Signed-By), the stanza keeps packages.libre.computer" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -q 'srv/test-repo' '$mnt/etc/apt/sources.list.d/both.sources' && test -e '$mnt$S/migrate-pending'"
+check "S24: apt reads every source" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null indextargets
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

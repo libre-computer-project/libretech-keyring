@@ -22,19 +22,20 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 
 # one-line (.list) entries. ours: active lines naming the frozen repo. other: any deb line, active or
 # commented out, naming anything else (a file with one is edited in place, not set aside). new: active
-# lines naming packages.libre.computer
+# lines naming packages.libre.computer for the board's suite
 list_ours() { grep -csE '^[[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer' "$1" || true; }
 list_other() { grep -sE '^[[:space:]]*(#[[:space:]]*)?deb(-src)?[[:space:]]' "$1" | grep -cv 'deb\.libre\.computer' || true; }
-list_new() { grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -cF "$URI" || true; }
+list_new() { grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -F "$URI" | grep -cE "[[:space:]]$suite([[:space:]]|\$)" || true; }
 # deb822 (.sources) stanzas, parsed as apt 3 does: only an empty line ends a stanza (a line of white space
-# continues the field before it), and Enabled: is false for no / false / without / off / disable / 0 (apt's
+# continues the field before it; a CRLF file's carriage returns are dropped first, as apt drops them), and Enabled: is false for no / false / without / off / disable / 0 (apt's
 # StringToBool). A stanza's URIs may name several repositories. ours: enabled stanzas naming the frozen repo;
 # other: stanzas naming any other repository, or disabled ones naming ours (content that must stay); new:
-# enabled stanzas naming packages.libre.computer; disable: the file with the frozen repo taken out of each
+# enabled stanzas naming packages.libre.computer for the board's suite (what remains of a stanza once the
+# frozen repo is taken out of it counts: the stanza stays a source); disable: the file with the frozen repo taken out of each
 # enabled stanza (the stanza disabled when it named nothing else, its other URIs kept when it did)
 sources_awk() { # MODE FILE
-	awk -v mode="$1" -v new="$URI" '
-		function flush(   k, t, ntok, keep, libre, oth, mine) {
+	awk -v mode="$1" -v new="$URI" -v suite="$suite" '
+		function flush(   k, t, ntok, keep, libre, oth, mine, hs) {
 			if (n == 0) return
 			v = uris; sub(/^[^:]*:/, "", v)
 			ntok = split(v, t, /[[:space:]]+/); keep = ""; libre = 0; oth = 0
@@ -46,8 +47,10 @@ sources_awk() { # MODE FILE
 			mine = libre && !off
 			if (mode == "ours" && mine) c++
 			if (mode == "other" && (oth || (off && libre))) c++
-			# a stanza that also names the frozen repo was written for its layout (suite linux): not the new source
-			if (mode == "new" && !off && index(v, new) && !libre) c++
+			hs = 0
+			ntok = split(suites, t, /[[:space:]]+/)
+			for (k = 1; k <= ntok; k++) if (t[k] == suite) hs = 1
+			if (mode == "new" && !off && index(v, new) && hs) c++
 			if (mode == "disable") {
 				for (k = 1; k <= n; k++) {
 					if (mine && oth && isuri[k]) continue
@@ -58,9 +61,10 @@ sources_awk() { # MODE FILE
 				if (mine && !oth) print "Enabled: no"
 				print ""
 			}
-			n = 0; uris = ""; off = 0; field = ""
+			n = 0; uris = ""; suites = ""; off = 0; field = ""
 			split("", isuri)
 		}
+		{ sub(/\r$/, "") }
 		/^$/ { flush(); next }
 		/^#/ { line[++n] = $0; next }
 		{
@@ -69,10 +73,12 @@ sources_awk() { # MODE FILE
 			# a continuation line (white space first): part of the field before it
 			if (l ~ /^[[:space:]]/) {
 				if (field == "uris") { uris = uris " " $0; isuri[n] = 1 }
+				if (field == "suites") suites = suites " " $0
 				next
 			}
 			field = l; sub(/:.*/, "", field)
 			if (field == "uris") { uris = $0; isuri[n] = 1 }
+			if (field == "suites") { suites = $0; sub(/^[^:]*:/, "", suites) }
 			if (l ~ /^enabled:[[:space:]]*(no|false|without|off|disable|0)[[:space:]]*$/) off = 1
 		}
 		END { flush(); if (mode != "disable") print c + 0 }
@@ -85,6 +91,16 @@ count() { # MODE FILE: entries of that kind in one sources file, either format
 	esac
 }
 
+# the board's suite on packages.libre.computer, if it has one
+. /etc/os-release
+case "${ID:-}:${VERSION_CODENAME:-}" in
+	debian:bookworm|debian:trixie|ubuntu:noble|ubuntu:resolute) suite=$VERSION_CODENAME ;;
+	# Raspbian 12 (armhf) reads Debian 12's suite: every package but the kernel is Architecture: all,
+	# and the armhf kernel is ARMv7, which these boards are
+	raspbian:bookworm) suite=bookworm ;;
+	*) suite="" ;;
+esac
+
 # the files with an enabled entry for the frozen repo, and whether the board already reads the new one
 old="" has_new=0
 for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
@@ -95,17 +111,10 @@ for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.l
 done
 [ -n "$old" ] || exit 0
 
-. /etc/os-release
-case "${ID:-}:${VERSION_CODENAME:-}" in
-	debian:bookworm|debian:trixie|ubuntu:noble|ubuntu:resolute) suite=$VERSION_CODENAME ;;
-	# Raspbian 12 (armhf) reads Debian 12's suite: every package but the kernel is Architecture: all,
-	# and the armhf kernel is ARMv7, which these boards are
-	raspbian:bookworm) suite=bookworm ;;
-	*)
-		say "this release (${ID:-unknown} ${VERSION_CODENAME:-unknown}) is not served by packages.libre.computer; staying on deb.libre.computer"
-		exit 0
-		;;
-esac
+if [ -z "$suite" ]; then
+	say "this release (${ID:-unknown} ${VERSION_CODENAME:-unknown}) is not served by packages.libre.computer; staying on deb.libre.computer"
+	exit 0
+fi
 
 # a kernel channel packages.libre.computer does not carry keeps the board on the frozen repo
 others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 2>/dev/null |
@@ -182,7 +191,7 @@ for f in $old; do
 	# a file with other entries too: the original kept, ours disabled in place
 	cp -p "$f" "$(backup "$f")"
 	case $f in
-		*.sources) sources_awk disable "$f" > "$T/edited" && cat "$T/edited" > "$f" ;;
+		*.sources) sources_awk disable "$f" > "$f.lc-new" && mv "$f.lc-new" "$f" ;;
 		*) sed -i -E 's|^([[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer.*)$|# moved to packages.libre.computer: \1|' "$f" ;;
 	esac
 done
