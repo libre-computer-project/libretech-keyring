@@ -49,16 +49,19 @@ pr() {
 	ps_=$(dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null) || { rc_=$?; [ "$rc_" != 1 ]; return; }
 	printf '%s\n' "$ps_" | grep -qvxE 'not-installed|config-files'
 }
-# never_began OLD NEW: true only if dpkg-query answers for both, OLD present and NEW not installed -- a rename
-# record (pending-NEW) is dropped on nothing less (a failing query keeps it: a record is the one trace of a
-# rename that took the old name and never brought the new one)
+# never_began OLD NEW: true only if dpkg-query answers for both, every architecture of OLD whole (installed, or
+# only awaiting triggers) and NEW not on the board at all (not installed or config-files only, or unknown) -- a
+# rename record (pending-NEW) is dropped on nothing less. A failing query, an old name part-way out (half-
+# configured or half-installed in the rename's own removal) or a new name part-way in keeps it: a record is the
+# one trace of a rename that took the old name and never brought the new one
 never_began() {
 	os_=$(dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null) || return 1
-	printf '%s\n' "$os_" | grep -qvxE 'not-installed|config-files' || return 1
+	[ -n "$os_" ] || return 1
+	! printf '%s\n' "$os_" | grep -qvxE 'installed|triggers-awaited|triggers-pending' || return 1
 	if ns_=$(dpkg-query -W -f '${db:Status-Status}\n' "$2" 2>/dev/null); then
-		! printf '%s\n' "$ns_" | grep -qxE 'installed|triggers-awaited|triggers-pending'
+		! printf '%s\n' "$ns_" | grep -qvxE 'not-installed|config-files'
 	else
-		# 1: dpkg does not know it (not installed); anything else: no answer
+		# 1: dpkg does not know it (not on the board); anything else: no answer
 		[ $? = 1 ]
 	fi
 }
