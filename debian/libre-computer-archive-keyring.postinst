@@ -5,6 +5,11 @@ case "$1" in
 		# an upgrade may change the migration's unit files; with dh_systemd_start overridden nothing else
 		# reloads systemd (a reload starts nothing)
 		[ ! -d /run/systemd/system ] || systemctl daemon-reload >/dev/null 2>&1 || true
+		# pending work keeps its timer, whichever package this is and whatever removed the link before
+		S=/var/lib/libre-computer-archive-keyring
+		if [ -e "$S/migrate-pending" ] || [ -e "$S/kernel-pending" ] || [ -e "$S/move-pending" ]; then
+			systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+		fi
 		# a board still on deb.libre.computer moves to packages.libre.computer; any other is untouched.
 		# A failure to move leaves the board on its old source and must not fail the keyring's install.
 		/usr/lib/libre-computer-archive-keyring/libre-computer-move ||

@@ -471,6 +471,7 @@ in_root apt-mark hold libretech-alsa-ucm-conf >/dev/null 2>&1
 in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s25.log" 2>&1
 check "S25: libretech-keyring purged, libre-computer-archive-keyring in" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring && ! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring 2>/dev/null | grep -qxE 'installed|config-files'"
 check "S25: the pending mark and the moved sources survive (a rename is left: retried)" bash -c "test -e '$mnt$S/migrate-pending' && test -s '$mnt$S/moved-sources/libre-computer-deb.list'"
+check "S25: and the timer that retries it stays enabled" test -L "$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer"
 cleanup
 cp "$trans_keyring" "$R/pool/"
 reindex

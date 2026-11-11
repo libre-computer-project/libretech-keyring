@@ -22,7 +22,12 @@ PROBE_KEY=${LC_PACKAGES_KEY:-$KEY}
 URIN=$(printf '%s' "$URI" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*:##; s#^/+##; s#/+$##')
 SRC=/etc/apt/sources.list.d/libre-computer.sources
 STATE=/var/lib/libre-computer-archive-keyring
-PKG=${DPKG_MAINTSCRIPT_PACKAGE:-libre-computer-archive-keyring}
+PKG=${DPKG_MAINTSCRIPT_PACKAGE:-}
+if [ -z "$PKG" ]; then
+	PKG=libretech-keyring
+	! dpkg-query -W -f '${db:Status-Status}\n' libre-computer-archive-keyring 2>/dev/null | grep -qx installed ||
+		PKG=libre-computer-archive-keyring
+fi
 say() { echo "libre-computer-archive-keyring: $*"; }
 
 # one-line (.list) entries, read by field as apt reads them: TYPE [OPTIONS] URI SUITE COMPONENTS, a # starting a
@@ -59,13 +64,15 @@ list_awk() { # MODE FILE
 			libre = entry && isours(uri)
 			if (entry && mode == "ours" && !commented && libre) c++
 			if (entry && mode == "other" && (commented || !libre)) c++
-			if (entry && mode == "new" && !commented && type == "deb" && isnew(uri) && dist == suite) c++
+			isn = entry && !commented && type == "deb" && isnew(uri) && dist == suite
+			if (mode == "new" && isn) c++
+			if (mode == "pick" && isn) print raw
 			if (mode == "disable") {
 				if (entry && !commented && libre) print "# moved to packages.libre.computer: " raw
 				else print raw
 			}
 		}
-		END { if (mode != "disable") print c + 0 }
+		END { if (mode != "disable" && mode != "pick") print c + 0 }
 	' "$2"
 }
 # deb822 (.sources) stanzas, parsed as apt 3 does: only an empty line ends a stanza (a line of white space
@@ -109,6 +116,7 @@ sources_awk() { # MODE FILE
 			ntok = split(v, t, /[[:space:]]+/)
 			for (k = 1; k <= ntok; k++) if (t[k] != "" && isnew(t[k])) hn = 1
 			if (mode == "new" && !off && hn && hs && hd) c++
+			if (mode == "pick" && !off && hn && hs && hd) { for (k = 1; k <= n; k++) print line[k]; print "" }
 			if (mode == "disable") {
 				for (k = 1; k <= n; k++) {
 					if (mine && oth && isuri[k]) continue
@@ -145,7 +153,7 @@ sources_awk() { # MODE FILE
 			if (field == "types") { types = $0; sub(/^[^:]*:/, "", types) }
 			if (field == "enabled") off = (l ~ /^enabled:[[:space:]]*(no|false|without|off|disable|[+-]?(0[xX])?0+)[[:space:]]*$/)
 		}
-		END { flush(); if (mode != "disable") print c + 0 }
+		END { flush(); if (mode != "disable" && mode != "pick") print c + 0 }
 	' "$2"
 }
 count() { # MODE FILE: entries of that kind in one sources file, either format
@@ -203,6 +211,12 @@ if [ -n "$others" ]; then
 	exit 0
 fi
 
+# the board is to move: from here on, any failure (a full /tmp, a probe) leaves the mark the timer retries,
+# cleared once the move is done or found impossible
+touch "$STATE/move-pending"
+systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
+
 ARCH=$(dpkg --print-architecture)
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
@@ -245,7 +259,10 @@ if [ $has_new = 1 ]; then
 	i=0
 	for f in $newfiles; do
 		i=$((i + 1))
-		case $f in *.sources) cp "$f" "$T/own/$i.sources" ;; *) cp "$f" "$T/own/$i.list" ;; esac
+		case $f in
+			*.sources) sources_awk pick "$f" > "$T/own/$i.sources" ;;
+			*) list_awk pick "$f" > "$T/own/$i.list" ;;
+		esac
 	done
 	apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/own" \
 		-o Dir::State::Lists="$T/ownlists" -o Dir::Cache="$T/owncache" update >"$T/own.log" 2>&1 || true

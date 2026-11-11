@@ -13,9 +13,12 @@ case "$1" in
 		fi
 		;;
 	remove)
-		# the timer libre-computer-move enabled, unless another package still ships it (the keyring's
-		# other name takes the unit over in a rename: its retries must survive this removal)
-		if [ ! -e /usr/lib/systemd/system/libre-computer-migrate.timer ]; then
+		# the timer libre-computer-move enabled, unless another package still ships it or work is pending (the
+		# keyring's other name takes the unit over in a rename, maybe only after this removal: its retries
+		# must survive it)
+		S=/var/lib/libre-computer-archive-keyring
+		if [ ! -e /usr/lib/systemd/system/libre-computer-migrate.timer ] && [ ! -e "$S/migrate-pending" ] &&
+			[ ! -e "$S/kernel-pending" ] && [ ! -e "$S/move-pending" ]; then
 			rm -f /etc/systemd/system/timers.target.wants/libre-computer-migrate.timer
 		fi
 		;;
