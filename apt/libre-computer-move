@@ -42,7 +42,7 @@ list_awk() { # MODE FILE
 			for (i = 1; i <= ntok; i++) if (t[i] != "") a[++k] = t[i]
 			type = (k >= 1) ? a[1] : ""; uri = (k >= 2) ? a[2] : ""; dist = (k >= 3) ? a[3] : ""
 			entry = (type == "deb" || type == "deb-src") && uri != ""
-			libre = entry && uri ~ /deb\.libre\.computer/
+			libre = entry && tolower(uri) ~ /deb\.libre\.computer/
 			if (entry && mode == "ours" && !commented && libre) c++
 			if (entry && mode == "other" && (commented || !libre)) c++
 			if (entry && mode == "new" && !commented && type == "deb" && norm(uri) == new && dist == suite) c++
@@ -70,7 +70,7 @@ sources_awk() { # MODE FILE
 			ntok = split(v, t, /[[:space:]]+/); keep = ""; libre = 0; oth = 0
 			for (k = 1; k <= ntok; k++) {
 				if (t[k] == "") continue
-				if (t[k] ~ /deb\.libre\.computer/) libre = 1
+				if (tolower(t[k]) ~ /deb\.libre\.computer/) libre = 1
 				else { oth = 1; keep = keep " " t[k] }
 			}
 			mine = libre && !off
@@ -116,7 +116,7 @@ sources_awk() { # MODE FILE
 			if (field == "uris") { uris = $0; isuri[n] = 1 }
 			if (field == "suites") { suites = $0; sub(/^[^:]*:/, "", suites) }
 			if (field == "types") { types = $0; sub(/^[^:]*:/, "", types) }
-			if (l ~ /^enabled:[[:space:]]*(no|false|without|off|disable|0)[[:space:]]*$/) off = 1
+			if (field == "enabled") off = (l ~ /^enabled:[[:space:]]*(no|false|without|off|disable|[+-]?0+)[[:space:]]*$/)
 		}
 		END { flush(); if (mode != "disable") print c + 0 }
 	' "$2"
@@ -287,9 +287,11 @@ for f in $old; do
 	cp -p "$f" "$(backup "$f")"
 	real=$(readlink -f "$f")
 	case $f in
-		*.sources) sources_awk disable "$f" > "$real.lc-new" ;;
-		*) list_awk disable "$f" > "$real.lc-new" ;;
+		*.sources) sources_awk disable "$f" > "$T/edited" ;;
+		*) list_awk disable "$f" > "$T/edited" ;;
 	esac
+	cp -p "$real" "$real.lc-new"
+	cat "$T/edited" > "$real.lc-new"
 	mv "$real.lc-new" "$real"
 done
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"

@@ -26,7 +26,8 @@ trap 'rm -rf "$W"' EXIT
 # a stop (shutdown) while apt or dpkg runs: the shell runs this once that command has finished, so dpkg is
 # never left half-done by us (the unit's KillMode=process signals this script alone)
 trap 'say "stopping after the step that was running"; exit 1' TERM
-st() { dpkg-query -W -f '${db:Status-Status}' "$1" 2>/dev/null || true; }
+# "installed" if any architecture of PACKAGE is installed (dpkg-query prints one line per installed arch)
+st() { ! dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx installed || echo installed; }
 
 # old name -> new name (the package-naming policy's table). kpairs: kernel meta-packages, never installed
 # here
@@ -94,17 +95,23 @@ safe_apt() {
 # would take it -- the kernel meta-package, or the keyring whose key every Libre Computer source line names
 had=" $(for p in $pairs $kpairs; do o=${p%%:*}; [ "$(st "$o")" != installed ] || printf '%s ' "$o"; done)"
 autos=" $(apt-mark showauto 2>/dev/null | tr '\n' ' ') "
+# unmarked: the old names whose new name's mark could not be set; they are kept (and retried), so autoremove
+# can never take a new name that was left automatic
+unmarked=" "
 keep_mark() {
 	for p in "$@"; do
 		o=${p%%:*} n=${p#*:}
 		case $had in *" $o "*) ;; *) continue ;; esac
 		[ "$(st "$n")" = installed ] || continue
-		case $autos in
-			*" $o "*) wait_lock apt-mark auto "$n" || true ;;
-			*) wait_lock apt-mark manual "$n" || true ;;
-		esac
+		case $autos in *" $o "*) m=auto ;; *) m=manual ;; esac
+		if ! wait_lock apt-mark "$m" "$n"; then
+			say "could not mark $n $m; keeping $o for now"
+			unmarked="$unmarked$o "
+		fi
 	done
 }
+# OLD... less the unmarked ones
+marked() { for o in "$@"; do case $unmarked in *" $o "*) ;; *) printf '%s ' "$o" ;; esac; done; }
 
 # remove OLD...: together, or each on its own when apt refuses that (one held or refused name keeps only
 # itself)
@@ -175,6 +182,8 @@ if [ -e "$STATE/migrate-pending" ]; then
 	done
 	# shellcheck disable=SC2086
 	keep_mark $pairs
+	# shellcheck disable=SC2086
+	gone=$(marked $gone)
 	if [ -n "$gone" ]; then
 		say "removing$gone (their libre-computer names are installed)"
 		# shellcheck disable=SC2086
@@ -207,10 +216,16 @@ if [ -n "$kgone" ]; then
 	say "removing$kgone (their new names are installed)"
 	# shellcheck disable=SC2086
 	keep_mark $kpairs
+	# shellcheck disable=SC2086
+	kgone=$(marked $kgone)
 	allow=$kolds
 	# shellcheck disable=SC2086
-	remove_old $kgone
+	[ -z "$kgone" ] || remove_old $kgone
 	allow=$olds
+	# one kept because its new name's mark could not be set is tried again
+	for o in $kolds; do
+		case $unmarked in *" $o "*) [ "$(st "$o")" != installed ] || waiting="$waiting $o" ;; esac
+	done
 fi
 if [ -n "$waiting" ]; then
 	mkdir -p "$STATE"
