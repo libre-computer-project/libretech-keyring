@@ -94,13 +94,15 @@ for p in $pairs; do
 done
 if [ -n "$new" ]; then
 	say "installing$new (in place of their old names)"
+	# a rename adds nothing the board did not have: not the new packages' Recommends (dtoverlay's i2c-tools,
+	# spi-tools; xorg's xserver-xorg), which an owner may have left out on purpose
 	# shellcheck disable=SC2086
-	safe_apt install $new || exit 1
+	safe_apt install --no-install-recommends $new || exit 1
 fi
 # an old name its new one did not displace (a transitional package, which only Depends on the new
 # name) goes once the new name is in
 gone=""
-for p in $pairs $kpairs; do
+for p in $pairs; do
 	o=${p%%:*} n=${p#*:}
 	if [ "$(st "$o")" = installed ] && [ "$(st "$n")" = installed ]; then
 		gone="$gone $o"
@@ -110,6 +112,20 @@ if [ -n "$gone" ]; then
 	say "removing$gone (their libre-computer names are installed)"
 	# shellcheck disable=SC2086
 	safe_apt remove $gone || exit 1
+fi
+# an old kernel meta-package, once the owner's upgrade has put its new name in. Optional: a refusal keeps
+# it (it is a transitional package that only Depends on the new name) and the migration still finishes
+kgone=""
+for p in $kpairs; do
+	o=${p%%:*} n=${p#*:}
+	if [ "$(st "$o")" = installed ] && [ "$(st "$n")" = installed ]; then
+		kgone="$kgone $o"
+	fi
+done
+if [ -n "$kgone" ]; then
+	say "removing$kgone (their new names are installed)"
+	# shellcheck disable=SC2086
+	safe_apt remove $kgone || say "keeping$kgone"
 fi
 left=""
 for p in $pairs; do

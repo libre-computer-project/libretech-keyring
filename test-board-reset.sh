@@ -26,7 +26,7 @@ LIST=/etc/apt/sources.list.d/libre-computer-deb.list
 SRC=/etc/apt/sources.list.d/libre-computer.sources
 OURS=(-o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts=/etc/apt/sources.list.d)
 export DEBIAN_FRONTEND=noninteractive PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin  # su -c keeps a user PATH
-NEW=(libre-computer-gpio libre-computer-dtoverlay libre-computer-alsa-ucm-conf libre-computer-archive-keyring libretech-keyring)
+NEW=(libre-computer-gpio libre-computer-dtoverlay alsa-ucm-conf-libre-computer libre-computer-archive-keyring libretech-keyring)
 OLD=(libretech-gpio libretech-dtoverlay)
 
 present() { local p out=(); for p in "$@"; do dpkg-query -W -f '${db:Status-Status}\n' "$p" 2>/dev/null | grep -qx installed && out+=("$p"); done; echo "${out[@]}"; }
@@ -37,8 +37,10 @@ if (( DRY )); then
 	exit 0
 fi
 
-systemctl stop libre-computer-migrate-now.timer libre-computer-migrate.service 2>/dev/null || true
-systemctl disable libre-computer-migrate.service 2>/dev/null || true
+# the migration's timers (the retry timer, the 30 s transient ones) and a mask test-board-move.sh may have left
+systemctl unmask --runtime libre-computer-migrate.service 2>/dev/null || true
+systemctl stop libre-computer-migrate.timer 'libre-computer-migrate-now*.timer' libre-computer-migrate.service 2>/dev/null || true
+systemctl disable libre-computer-migrate.timer 2>/dev/null || true
 read -r -a P <<< "$(present "${NEW[@]}" "${OLD[@]}")"
 (( ${#P[@]} == 0 )) || dpkg --purge "${P[@]}"
 rm -f -- "$SRC"

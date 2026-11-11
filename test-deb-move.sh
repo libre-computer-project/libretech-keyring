@@ -52,16 +52,20 @@ gpg --batch --quiet --homedir "$G" --pinentry-mode loopback --passphrase '' \
 gpg --batch --homedir "$G" --export > "$W/test-key.gpg"
 R=$W/repo
 mkdir -p "$R/pool"
-standin() { # NEW OLD
+standin() { # NEW OLD [EXTRA-CONTROL-LINE]
 	local d=$W/pkg-$1
 	mkdir -p "$d/DEBIAN" "$d/usr/share/doc/$1"
-	printf 'Package: %s\nVersion: 2026.11.10\nArchitecture: all\nMaintainer: t <t@invalid>\nBreaks: %s (<< 2026.11.10)\nReplaces: %s (<< 2026.11.10)\nProvides: %s (= 2026.11.10)\nDescription: stand-in for %s\n' \
-		"$1" "$2" "$2" "$2" "$1" > "$d/DEBIAN/control"
+	printf 'Package: %s\nVersion: 2026.11.10\nArchitecture: all\nMaintainer: t <t@invalid>\nBreaks: %s (<< 2026.11.10)\nReplaces: %s (<< 2026.11.10)\nProvides: %s (= 2026.11.10)\n%bDescription: stand-in for %s\n' \
+		"$1" "$2" "$2" "$2" "${3:+$3\n}" "$1" > "$d/DEBIAN/control"
 	echo "stand-in" > "$d/usr/share/doc/$1/README"
 	dpkg-deb --root-owner-group -b "$d" "$R/pool/$1.deb" >/dev/null
 }
 standin libre-computer-gpio libretech-gpio
-standin libre-computer-dtoverlay libretech-dtoverlay
+# a Recommends, as the real dtoverlay's i2c-tools: a rename installs nothing the board did not have
+standin libre-computer-dtoverlay libretech-dtoverlay 'Recommends: lc-test-recommended'
+mkdir -p "$W/pkg-rec/DEBIAN"
+printf 'Package: lc-test-recommended\nVersion: 1\nArchitecture: all\nMaintainer: t <t@invalid>\nDescription: a recommended package\n' > "$W/pkg-rec/DEBIAN/control"
+dpkg-deb --root-owner-group -b "$W/pkg-rec" "$R/pool/lc-test-recommended.deb" >/dev/null
 standin alsa-ucm-conf-libre-computer libretech-alsa-ucm-conf
 standin xserver-xorg-core-libre-computer xserver-xorg-video-libretech
 standin linux-image-lc-lts-armhf linux-image-lc-lts-arm
@@ -125,6 +129,7 @@ done
 for p in libretech-gpio libretech-dtoverlay libretech-alsa-ucm-conf xserver-xorg-video-libretech libretech-keyring; do
 	check "S1: $p gone" bash -c "$(declare -f installed); mnt='$mnt'; ! installed $p"
 done
+check "S1: a new package's Recommends is not installed" bash -c "$(declare -f installed); mnt='$mnt'; ! installed lc-test-recommended"
 check "S1: the key file is still in place (it changed package, not path)" test -s "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 check "S1: nothing pending, the timer disabled" bash -c "test ! -e '$mnt/var/lib/libre-computer-archive-keyring/migrate-pending' && test ! -e '$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer'"
 in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/migrate2.log" 2>&1
@@ -248,7 +253,8 @@ cleanup
 echo "== S8: deb822: a stanza of ours beside another in one file; a disabled one alone in another"
 setup
 rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
-printf 'Types: deb\nURIs: https://deb.libre.computer/repo\nSuites: linux\nComponents: main\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n\nTypes: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/mixed.sources"
+# ours names its URI on a continuation line, as deb822 allows
+printf '# a comment\nTypes: deb\nURIs: file:///srv/unused\n https://deb.libre.computer/repo\nSuites: linux\nComponents: main\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n\nTypes: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/mixed.sources"
 install_keyring
 check "S8: our stanza is disabled in place, the other stanza untouched" bash -c "awk 'BEGIN{RS=\"\"} /deb\\.libre\\.computer/ && /Enabled: no/ {a=1} /srv\\/test-repo/ && !/Enabled:/ {b=1} END{exit !(a&&b)}' '$mnt/etc/apt/sources.list.d/mixed.sources'"
 check "S8: apt reads the edited file" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts=/etc/apt/sources.list.d indextargets

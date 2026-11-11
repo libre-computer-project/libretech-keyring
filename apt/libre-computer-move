@@ -40,10 +40,14 @@ sources_awk() { # MODE FILE
 			n = 0; uris = ""; off = 0
 		}
 		/^[[:space:]]*$/ { flush(); next }
+		/^#/ { line[++n] = $0; next }
 		{
 			line[++n] = $0
 			l = tolower($0)
-			if (l ~ /^uris:/) uris = $0
+			# a field continues on lines that start with white space (URIs: on one line, the URI on the next)
+			if (l ~ /^[[:space:]]/) { if (field == "uris") uris = uris " " $0; next }
+			field = l; sub(/:.*/, "", field)
+			if (field == "uris") uris = $0
 			if (l ~ /^enabled:[[:space:]]*no[[:space:]]*$/) off = 1
 		}
 		END { flush(); if (mode != "disable") print c + 0 }

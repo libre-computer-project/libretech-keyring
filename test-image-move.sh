@@ -5,7 +5,9 @@
 # the self-contained libretech-keyring (build-deblibre.sh) and an ordinary `apt-get update && apt-get upgrade`.
 # A release packages.libre.computer serves moves, and the migration installs the new names; any other stays on
 # deb.libre.computer, saying why. Both repositories are local stand-ins signed by a throwaway key put in place of
-# the shipped one; the new names are stand-ins that Break and Replace their old names, as the real ones do.
+# the shipped one; the new names are stand-ins that Break, Replace and Provide their old names, as the real ones do.
+# The migration installs no kernel: a renamed kernel meta-package (armhf -arm -> -armhf) follows the owner's own
+# upgrade, run here as `apt-get upgrade --with-new-pkgs` (what `apt upgrade` does) when the transitional is served.
 # Only Libre Computer's source is read (the image's own sources are set aside for the test).
 #
 #   sudo ./test-image-move.sh <image.img> <debs dir> <real-keyring.deb> [<real packages dir>]
@@ -104,8 +106,8 @@ suite() {
 standin() { # NEW OLD
 	local d=$W/pkg-$1
 	mkdir -p "$d/DEBIAN" "$d/usr/share/doc/$1"
-	printf 'Package: %s\nVersion: 2026.11.10\nArchitecture: all\nMaintainer: t <t@invalid>\nBreaks: %s (<< 2026.11.10)\nReplaces: %s (<< 2026.11.10)\nDescription: stand-in for %s\n' \
-		"$1" "$2" "$2" "$1" > "$d/DEBIAN/control"
+	printf 'Package: %s\nVersion: 2026.11.10\nArchitecture: all\nMaintainer: t <t@invalid>\nBreaks: %s (<< 2026.11.10)\nReplaces: %s (<< 2026.11.10)\nProvides: %s (= 2026.11.10)\nDescription: stand-in for %s\n' \
+		"$1" "$2" "$2" "$2" "$1" > "$d/DEBIAN/control"
 	echo stand-in > "$d/usr/share/doc/$1/README"
 	# a Debian file name: apt-ftparchive -a picks a package's arch from it
 	dpkg-deb --root-owner-group -b "$d" "$W/pkgs/${1}_2026.11.10_all.deb" >/dev/null
@@ -172,9 +174,16 @@ else
 	for p in $pairs; do
 		o=${p%%:*} n=${p#*:}
 		[[ " $old " == *" $o "* ]] || continue
-		check "5: $o -> $n" bash -c "$(declare -f installed); mnt='$mnt'; installed $n && ! installed $o"
+		case $o in
+			linux-*) check "5: $o kept, $n not installed by the migration" bash -c "$(declare -f installed); mnt='$mnt'; installed $o && ! installed $n" ;;
+			*) check "5: $o -> $n" bash -c "$(declare -f installed); mnt='$mnt'; installed $n && ! installed $o" ;;
+		esac
 	done
 	check "5: nothing pending" test ! -e "$state/migrate-pending"
+	if [[ " $old " == *" linux-image-lc-lts-arm "* ]] && compgen -G "$P/pool/linux-image-lc-lts-arm_*.deb" >/dev/null; then
+		in_root env DEBIAN_FRONTEND=noninteractive apt-get -y -q --with-new-pkgs upgrade > "$W/6-upgrade.log" 2>&1
+		check "6: the owner's upgrade brings linux-image-lc-lts-armhf through the transitional -arm" bash -c "$(declare -f installed); mnt='$mnt'; installed linux-image-lc-lts-armhf"
+	fi
 	check "5: dpkg --audit says nothing" bash -c "[[ -z \$(chroot '$mnt' dpkg --audit) ]]"
 	result="moved:$expect"
 fi
