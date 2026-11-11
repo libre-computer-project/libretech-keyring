@@ -951,14 +951,14 @@ migrate s64c.log
 check "S64: then libre-computer-gpio in, libretech-gpio gone (the rename's run removing it), done" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-gpio && ! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-gpio 2>/dev/null | grep -qvx 'not-installed\|config-files' && grep -q 'done: the board reads' '$W/s64c.log'"
 cleanup
 
-echo "== S66: the owner's transitional libretech-keyring left part-done is not the swap's: the renames wait"
+echo "== S66: the owner's transitional libretech-keyring left part-done is not excepted: never configured, only removed (its rename's removal configures nothing)"
 setup
 install_keyring
 # the transitional unpacked again, never configured (as a cut-short run of the owner's leaves it)
 in_root dpkg --unpack "/tmp/${trans_keyring##*/}" > "$W/s66a.log" 2>&1
 check "S66: the precondition: libretech-keyring unpacked beside libre-computer-archive-keyring" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring | grep -qx unpacked"
 migrate s66.log
-check "S66: left unpacked, the renames waiting, saying why" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring | grep -qx unpacked && grep -q 'part-done: *libretech-keyring' '$W/s66.log'"
+check "S66: removed by the rename's removal run, never configured, the migration done" bash -c "! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring 2>/dev/null | grep -qvx 'not-installed\|config-files' && ! grep -q 'Setting up libretech-keyring' '$W/s66.log' && grep -q 'done: the board reads' '$W/s66.log'"
 cleanup
 
 echo "== S67: the old kernel meta-package left unpacked (its postinst failed) beside the new one still goes"
