@@ -46,7 +46,12 @@ list_awk() { # MODE FILE
 			commented = (body ~ /^[[:space:]]*#/)
 			if (commented) sub(/^[[:space:]]*#+[[:space:]]*/, "", body)
 			sub(/#.*$/, "", body)
-			gsub(/\[[^]]*\]/, " ", body)
+			# the options are the [ ... ] right after the type; a bracketed IPv6 host in the URI stays
+			sub(/^[[:space:]]+/, "", body)
+			if (match(body, /^[^[:space:]]+[[:space:]]+\[[^]]*\]/)) {
+				opt = substr(body, 1, RLENGTH); sub(/\[[^]]*\]$/, " ", opt)
+				body = opt substr(body, RLENGTH + 1)
+			}
 			ntok = split(body, t, /[[:space:]]+/); k = 0
 			for (i = 1; i <= ntok; i++) if (t[i] != "") a[++k] = t[i]
 			type = (k >= 1) ? a[1] : ""; uri = (k >= 2) ? a[2] : ""; dist = (k >= 3) ? a[3] : ""
@@ -163,8 +168,8 @@ esac
 # the files with an enabled entry for the frozen repo, and whether the board already reads the new one
 # one move at a time (the timer's run and a dpkg-reconfigure or a keyring upgrade can meet): the second waits,
 # then finds the board moved and has nothing to do
-for d in /run/lock /var/lock /tmp; do [ -d "$d" ] && break; done
-exec 9>"$d/libre-computer-move.lock"
+mkdir -p "$STATE"
+exec 9>"$STATE/.move.lock"
 flock 9
 
 old="" has_new=0 newfiles=""
@@ -271,6 +276,7 @@ backup() { # FILE: the path its original is kept at
 # changes and cleared once the move is done
 touch "$STATE/move-pending"
 systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
 
 # 1. the new source in place first, so the board never lacks one (a full disk stops here, before anything
 # changed). A board that already reads packages.libre.computer keeps its own entry: a second one with a
@@ -324,7 +330,13 @@ for f in $old; do
 	if [ $whole = 1 ]; then
 		# a symlink: the backup holds the content it named (a relative link would dangle there), and the
 		# link goes; the file it named stays where it is
-		if [ -L "$f" ]; then cp -pL "$f" "$(backup "$f")" && rm -f "$f"; else mv "$f" "$(backup "$f")"; fi
+		b=$(backup "$f")
+		if [ -L "$f" ]; then
+			cp -pL "$f" "$b"
+			rm -f "$f"
+		else
+			mv "$f" "$b"
+		fi
 		continue
 	fi
 	# a file with other entries too: the original kept, ours disabled in place -- in the file itself, or in
