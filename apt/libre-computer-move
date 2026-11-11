@@ -260,7 +260,7 @@ T=$(mktemp -d) tmp=""
 trap 'rm -rf "$T"; [ -z "$tmp" ] || rm -f "$tmp"' EXIT
 # the scratch probes run none of apt's update hooks (appstream, packagekit, command-not-found): they would
 # refresh the system's caches from inside the postinst
-printf '#clear APT::Update::Pre-Invoke;\n#clear APT::Update::Post-Invoke;\n#clear APT::Update::Post-Invoke-Success;\n#clear APT::Update::Post-Invoke-Stats;\n' > "$T/nohooks.conf"
+printf '#clear APT::Update::Pre-Invoke;\n#clear APT::Update::Post-Invoke;\n#clear APT::Update::Post-Invoke-Success;\n#clear APT::Update::Post-Invoke-Stats;\n#clear APT::Update::Auth-Failure;\n' > "$T/nohooks.conf"
 trap 'exit 1' INT TERM
 chmod 755 "$T"
 stanza() { # KEY: the new source's stanza
@@ -374,6 +374,8 @@ if [ $has_new = 0 ]; then
 	if [ -f "$real_src" ]; then
 		chmod --reference="$real_src" "$tmp"
 		chown --reference="$real_src" "$tmp"
+		# readable to every user too (apt run as a normal user reads the sources)
+		chmod a+r "$tmp"
 	else
 		# a new file readable to every user (apt as a normal user reads the sources), whatever the umask
 		chmod 0644 "$tmp"

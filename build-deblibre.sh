@@ -34,7 +34,11 @@ if [[ -z $below ]]; then
 	# lowest version of it that any suite and architecture serves; every index must be read and list it, or the
 	# script refuses (an unread suite could serve a lower one)
 	for s in bookworm trixie noble resolute; do
+		rel=$(curl -fsSL "https://packages.libre.computer/deb/dists/$s/Release") ||
+			{ echo "could not read packages.libre.computer $s's Release; pass --below" >&2; exit 1; }
 		for a in arm64 armhf amd64; do
+			# an architecture the suite does not publish has no board reading it there
+			grep -qE "^Architectures:.* $a( |$)" <<<"$rel" || continue
 			v=$(curl -fsSL "https://packages.libre.computer/deb/dists/$s/main/binary-$a/Packages.gz" | gzip -dc |
 				awk '/^Package: / {p = $2} /^Version: / && p == "libre-computer-archive-keyring" {print $2}') ||
 				{ echo "could not read packages.libre.computer $s $a; pass --below" >&2; exit 1; }
