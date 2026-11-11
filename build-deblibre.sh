@@ -52,9 +52,11 @@ if [[ -z $above ]]; then
 		grep -vx '\.\.\?') || { echo "could not list deb.libre.computer's suites; pass --above" >&2; exit 1; }
 	[[ -n $suites ]] || { echo "deb.libre.computer lists no suite; pass --above" >&2; exit 1; }
 	for s in $suites; do for a in arm64 armhf amd64; do
-		# a suite that does not carry this architecture is skipped; one that does and cannot be read refuses
-		curl -fsSL "https://deb.libre.computer/repo/dists/$s/Release" 2>/dev/null |
-			grep -qE "^Architectures:.* $a( |$)" || continue
+		# a suite that does not carry this architecture is skipped; one whose Release or index cannot be read
+		# refuses (the Release read whole first: grep -q on a pipe can end it early, which pipefail calls a failure)
+		rel=$(curl -fsSL "https://deb.libre.computer/repo/dists/$s/Release") ||
+			{ echo "could not read deb.libre.computer $s's Release; pass --above" >&2; exit 1; }
+		grep -qE "^Architectures:.* $a( |$)" <<<"$rel" || continue
 		v=$(curl -fsSL "https://deb.libre.computer/repo/dists/$s/main/binary-$a/Packages.gz" | gzip -dc |
 			awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}') ||
 			{ echo "could not read deb.libre.computer $s $a; pass --above" >&2; exit 1; }

@@ -416,7 +416,7 @@ say "moved to packages.libre.computer ($suite); the old source files are in $STA
 # done, and a transient timer starts them 30 s from now
 if [ -d /run/systemd/system ]; then
 	systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
-	systemd-run --quiet --no-block --on-active=30 --unit="libre-computer-migrate-now-$stamp" \
+	systemd-run --quiet --no-block --on-active=30 --unit="libre-computer-migrate-now-$stamp-$$" \
 		systemctl start --no-block libre-computer-migrate.service >/dev/null 2>&1 ||
 		say "the renames run within minutes of the next boot"
 else
