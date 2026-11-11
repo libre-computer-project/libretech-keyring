@@ -741,5 +741,36 @@ check "S50: the precondition: the three old names were in beside their new ones"
 check "S50: ended on its own; gpio and dtoverlay gone, the held one kept, the migration pending" bash -c "$(declare -f installed); mnt='$mnt'; test $s50rc -lt 124 && ! installed libretech-gpio && ! installed libretech-dtoverlay && installed libretech-alsa-ucm-conf && installed libre-computer-gpio && test -e '$mnt$S/migrate-pending'"
 cleanup
 
+echo "== S51: apt would refuse the sources with the new stanza, libre-computer.sources already there: nothing written, no copy kept"
+setup
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+echo 'deb-src [signed-by=/usr/share/keyrings/own-copy.gpg] file:///srv/test-repo trixie main' > "$mnt/etc/apt/sources.list.d/src.list"
+printf 'Types: deb\nURIs: file:///srv/other\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+cp "$mnt/etc/apt/sources.list.d/libre-computer.sources" "$W/s51.before"
+install_keyring
+if grep -q 'apt cannot read the sources' "$W/dpkg.log"; then
+	check "S51: the file unchanged, no copy of it kept, deb.libre.computer kept, the retry armed, apt reads its sources" bash -c "cmp -s '$W/s51.before' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -z \"\$(ls -A '$mnt$S/moved-sources' 2>/dev/null)\" && test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/move-pending' && chroot '$mnt' apt-get -q indextargets >/dev/null"
+else
+	# this apt accepts the two side by side: then the move must leave apt reading its sources
+	check "S51: apt reads its sources after the move" in_root apt-get -q indextargets
+fi
+cleanup
+
+echo "== S52: a renaming mark left by a killed migration does not keep the timer; one of a live migration does"
+for s52 in stale live; do
+	deblibre_repo "$deblibre_keyring"
+	setup_deblibre
+	upgrade
+	if [[ $s52 == stale ]]; then pid=999999; while kill -0 "$pid" 2>/dev/null; do pid=$((pid + 1)); done; else pid=$$; fi
+	echo "$(cat /proc/sys/kernel/random/boot_id) $pid" > "$mnt$S/renaming"
+	in_root env DEBIAN_FRONTEND=noninteractive dpkg -r libretech-keyring > "$W/s52-$s52.log" 2>&1
+	if [[ $s52 == stale ]]; then
+		check "S52: stale mark: the timer's link goes with the package" test ! -e "$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer"
+	else
+		check "S52: live mark: the timer's link stays for the rename" test -L "$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer"
+	fi
+	cleanup
+done
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

@@ -36,13 +36,22 @@ if [[ -z $below ]]; then
 	for s in bookworm trixie noble resolute; do
 		rel=$(curl -fsSL "https://packages.libre.computer/deb/dists/$s/Release") ||
 			{ echo "could not read packages.libre.computer $s's Release; pass --below" >&2; exit 1; }
+		# a board reads its architecture's index and binary-all (where the suite publishes it): an Architecture:
+		# all package may sit only there
+		vall=""
+		if grep -qE "^Architectures:.* all( |$)" <<<"$rel"; then
+			vall=$(curl -fsSL "https://packages.libre.computer/deb/dists/$s/main/binary-all/Packages.gz" | gzip -dc |
+				awk '/^Package: / {p = $2} /^Version: / && p == "libre-computer-archive-keyring" {print $2}') ||
+				{ echo "could not read packages.libre.computer $s all; pass --below" >&2; exit 1; }
+		fi
 		for a in arm64 armhf amd64; do
 			# an architecture the suite does not publish has no board reading it there
 			grep -qE "^Architectures:.* $a( |$)" <<<"$rel" || continue
 			v=$(curl -fsSL "https://packages.libre.computer/deb/dists/$s/main/binary-$a/Packages.gz" | gzip -dc |
 				awk '/^Package: / {p = $2} /^Version: / && p == "libre-computer-archive-keyring" {print $2}') ||
 				{ echo "could not read packages.libre.computer $s $a; pass --below" >&2; exit 1; }
-			[[ -n $v ]] || { echo "packages.libre.computer $s $a lists no libre-computer-archive-keyring; pass --below" >&2; exit 1; }
+			v="$v $vall"
+			[[ -n ${v// /} ]] || { echo "packages.libre.computer $s $a lists no libre-computer-archive-keyring; pass --below" >&2; exit 1; }
 			for x in $v; do
 				[[ -z $below ]] || dpkg --compare-versions "$x" lt "$below" && below=$x
 			done

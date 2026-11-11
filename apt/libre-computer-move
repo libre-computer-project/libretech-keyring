@@ -250,11 +250,15 @@ undo_src() { # KIND BACKUP PATH: the previous libre-computer.sources back (file:
 new_errors() { # BEFORE AFTER: the E: lines apt prints now and did not before
 	grep '^E:' "$2" | grep -vxF -f "$1"
 }
-unreadable() { # BEFORE: say so, and the previous source back
-	undo_src "$(cat "$C/kind")" "$(cat "$C/backup")" "$(cat "$C/path")"
-	rm -rf "$C"
+say_unreadable() { # LOG
 	say "apt cannot read the sources with packages.libre.computer added beside the board's own entry for it; staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
 	grep -E '^(E|W):' "$1" | sed 's/^/  /' || true
+}
+unreadable() { # LOG: say so, and the previous source back (its copy, now the file again, not kept twice)
+	undo_src "$(cat "$C/kind")" "$(cat "$C/backup")" "$(cat "$C/path")"
+	[ ! -s "$C/backup" ] || rm -f "$(cat "$C/backup")"
+	rm -rf "$C"
+	say_unreadable "$1"
 	exit 0
 }
 if [ -s "$C/kind" ]; then
@@ -360,8 +364,9 @@ if [ $has_new = 1 ]; then
 	# the InRelease, and main for this board's architecture (an entry with only non-free, or for another
 	# architecture, would leave nothing serving the renamed packages)
 	# (apt keeps the host's case in its list file names, so compared without case; every slash is an underscore
-	# there, a doubled one too, so runs of them match; dots literal)
-	want=$(printf '%s' "$URIN" | sed 's/[.]/[.]/g; s#/#_+#g')_+dists_${suite}
+	# there, a doubled one too, so runs of them match; dots literal; an explicit port, which apt keeps in the
+	# name as host:port, may follow the host)
+	want=$(printf '%s' "$URIN" | sed 's/[.]/[.]/g; s#/#(:[0-9]+)?/#; s#/#_+#g')_+dists_${suite}
 	if ! ls "$T/ownlists/" 2>/dev/null | grep -qiE -- "${want}_InRelease" ||
 		! ls "$T/ownlists/" 2>/dev/null | grep -qiE -- "${want}_main_binary-${ARCH}_Packages"; then
 		say "the board's own entry for packages.libre.computer is not usable (its key, or the network); staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
@@ -404,6 +409,23 @@ if [ $has_new = 0 ]; then
 	# what apt says of the sources now: a source it refuses after the change, and did not before, is ours to undo
 	mkdir -p "$T/icache"
 	apt-get -q -o Dir::Cache="$T/icache" indextargets >/dev/null 2>"$T/before.log" || true
+	# asked first of a copy of the sources with the new file in it: a board whose sources apt would refuse
+	# keeps its own untouched (nothing written, no copy kept; the timer asks again). apt names the copy's
+	# files in what it says, so the copy's directory is read as the real one
+	mkdir -p "$T/parts"
+	cp -a "$SP/." "$T/parts/"
+	rm -f "$T/parts/${SRC##*/}"
+	cp "$T/src" "$T/parts/${SRC##*/}"
+	apt-get -q -o Dir::Cache="$T/icache" -o Dir::Etc::SourceParts="$T/parts" indextargets >/dev/null 2>"$T/pre.raw" || true
+	awk -v a="$T/parts" -v b="$SP" '{
+		o = ""
+		while ((i = index($0, a)) > 0) { o = o substr($0, 1, i - 1) b; $0 = substr($0, i + length(a)) }
+		print o $0
+	}' "$T/pre.raw" > "$T/pre.log"
+	if new_errors "$T/before.log" "$T/pre.log" >/dev/null; then
+		say_unreadable "$T/pre.log"
+		exit 0
+	fi
 	src_backup="" src_link=""
 	if [ -f "$SRC" ]; then
 		src_backup=$(backup "$SRC")

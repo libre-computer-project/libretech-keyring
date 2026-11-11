@@ -92,7 +92,10 @@ safe_apt() {
 			return 1
 		fi
 		mkdir -p "$STATE"
-		touch "$STATE/renaming"
+		# this boot and this script's pid: a mark a power loss or a kill left is not a rename under way
+		# ("-" for a boot id it cannot read, as the postrm reads it)
+		bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+		echo "${bid:--} $$" > "$STATE/renaming"
 		# shellcheck disable=SC2086
 		if $APT "$@" >"$W/out" 2>&1; then rm -f "$STATE/renaming"; cat "$W/out"; return 0; fi
 		rm -f "$STATE/renaming"
