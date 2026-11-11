@@ -32,19 +32,24 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 # entry for packages.libre.computer and the board's suite; disable: the file with ours commented out
 list_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
+		function isours(u,   p, h) {
+			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
+			split(u, p, "/"); h = p[1]; sub(/^.*@/, "", h); sub(/:.*$/, "", h)
+			return h == "deb.libre.computer" || p[2] == "deb.libre.computer"
+		}
 		function norm(u) { sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u); return u }
 		{ sub(/\r$/, "") }
 		{
 			raw = $0; body = $0
 			commented = (body ~ /^[[:space:]]*#/)
-			if (commented) sub(/^[[:space:]]*#[[:space:]]*/, "", body)
+			if (commented) sub(/^[[:space:]]*#+[[:space:]]*/, "", body)
 			sub(/#.*$/, "", body)
 			gsub(/\[[^]]*\]/, " ", body)
 			ntok = split(body, t, /[[:space:]]+/); k = 0
 			for (i = 1; i <= ntok; i++) if (t[i] != "") a[++k] = t[i]
 			type = (k >= 1) ? a[1] : ""; uri = (k >= 2) ? a[2] : ""; dist = (k >= 3) ? a[3] : ""
 			entry = (type == "deb" || type == "deb-src") && uri != ""
-			libre = entry && tolower(uri) ~ /deb\.libre\.computer/
+			libre = entry && isours(uri)
 			if (entry && mode == "ours" && !commented && libre) c++
 			if (entry && mode == "other" && (commented || !libre)) c++
 			if (entry && mode == "new" && !commented && type == "deb" && norm(uri) == new && dist == suite) c++
@@ -59,12 +64,19 @@ list_awk() { # MODE FILE
 # deb822 (.sources) stanzas, parsed as apt 3 does: only an empty line ends a stanza (a line of white space
 # continues the field before it; a CRLF file's carriage returns are dropped first, as apt drops them), and Enabled: is false for no / false / without / off / disable / 0 (apt's
 # StringToBool). A stanza's URIs may name several repositories. ours: enabled stanzas naming the frozen repo;
-# other: stanzas naming any other repository, or disabled ones naming ours (content that must stay); new:
+# other: stanzas naming any other repository, disabled ones naming ours, or commented-out entries (content
+# that must stay); ours / other decided by the URI's host (deb.libre.computer, or first in a caching proxy's
+# path); new:
 # enabled stanzas naming packages.libre.computer for the board's suite (what remains of a stanza once the
 # frozen repo is taken out of it counts: the stanza stays a source); disable: the file with the frozen repo taken out of each
 # enabled stanza (the stanza disabled when it named nothing else, its other URIs kept when it did)
 sources_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
+		function isours(u,   p, h) {
+			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
+			split(u, p, "/"); h = p[1]; sub(/^.*@/, "", h); sub(/:.*$/, "", h)
+			return h == "deb.libre.computer" || p[2] == "deb.libre.computer"
+		}
 		function norm(u) { sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u); return u }
 		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd, hn) {
 			if (n == 0) return
@@ -72,12 +84,12 @@ sources_awk() { # MODE FILE
 			ntok = split(v, t, /[[:space:]]+/); keep = ""; libre = 0; oth = 0
 			for (k = 1; k <= ntok; k++) {
 				if (t[k] == "") continue
-				if (tolower(t[k]) ~ /deb\.libre\.computer/) libre = 1
+				if (isours(t[k])) libre = 1
 				else { oth = 1; keep = keep " " t[k] }
 			}
 			mine = libre && !off
 			if (mode == "ours" && mine) c++
-			if (mode == "other" && (oth || (off && libre))) c++
+			if (mode == "other" && (oth || (off && libre) || cent)) c++
 			hs = 0
 			ntok = split(suites, t, /[[:space:]]+/)
 			for (k = 1; k <= ntok; k++) if (t[k] == suite) hs = 1
@@ -98,12 +110,16 @@ sources_awk() { # MODE FILE
 				if (mine && !oth) print "Enabled: no"
 				print ""
 			}
-			n = 0; uris = ""; suites = ""; types = ""; off = 0; field = ""
+			n = 0; uris = ""; suites = ""; types = ""; off = 0; field = ""; cent = 0
 			split("", isuri)
 		}
 		{ sub(/\r$/, "") }
 		/^$/ { flush(); next }
-		/^#/ { line[++n] = $0; next }
+		/^#/ {
+			line[++n] = $0
+			if (tolower($0) ~ /^#+[[:space:]]*(types|uris|suites)[[:space:]]*:/) cent = 1
+			next
+		}
 		{
 			line[++n] = $0
 			l = tolower($0)

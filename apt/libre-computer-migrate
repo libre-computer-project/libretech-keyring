@@ -101,6 +101,9 @@ autos=" $(apt-mark showauto 2>/dev/null | tr '\n' ' ') "
 # can never take a new name that was left automatic
 unmarked=" "
 keep_mark() {
+	# apt-mark takes no lock: wait until no other apt or dpkg runs (dpkg --configure -a takes dpkg's lock, and
+	# has nothing to do here), so the copy is not written over by an apt that ends after it
+	wait_lock dpkg --configure -a --force-confold --force-confdef || true
 	for p in "$@"; do
 		o=${p%%:*} n=${p#*:}
 		case $had in *" $o "*) ;; *) continue ;; esac
@@ -190,6 +193,9 @@ if [ -e "$STATE/migrate-pending" ]; then
 			say "removing$gone (their libre-computer names are installed)"
 			# shellcheck disable=SC2086
 			remove_old $gone
+			# again, now that the removal has had dpkg's lock: an apt that ran alongside is done
+			# shellcheck disable=SC2086
+			keep_mark $pairs
 		fi
 		left=""
 		for p in $pairs; do
@@ -225,6 +231,9 @@ if [ -n "$kgone" ]; then
 	# shellcheck disable=SC2086
 	[ -z "$kgone" ] || remove_old $kgone
 	allow=$olds
+	# again, now that the removal has had dpkg's lock: an apt that ran alongside is done
+	# shellcheck disable=SC2086
+	keep_mark $kpairs
 	# one kept because its new name's mark could not be set is tried again
 	for o in $kolds; do
 		case $unmarked in *" $o "*) [ "$(st "$o")" != installed ] || waiting="$waiting $o" ;; esac
