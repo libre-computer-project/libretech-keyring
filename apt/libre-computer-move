@@ -235,11 +235,14 @@ fi
 # cleared once the move is done or found impossible
 touch "$STATE/move-pending"
 systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
+[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 
 ARCH=$(dpkg --print-architecture)
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
+# the scratch probes run none of apt's update hooks (appstream, packagekit, command-not-found): they would
+# refresh the system's caches from inside the postinst
+printf '#clear APT::Update::Pre-Invoke;\n#clear APT::Update::Post-Invoke;\n#clear APT::Update::Post-Invoke-Success;\n' > "$T/nohooks.conf"
 trap 'exit 1' INT TERM
 chmod 755 "$T"
 stanza() { # KEY: the new source's stanza
@@ -260,7 +263,7 @@ if [ $has_new = 0 ]; then
 	mkdir -p "$T/parts" "$T/lists/partial" "$T/cache/archives/partial"
 	! id _apt >/dev/null 2>&1 || chown _apt "$T/lists/partial" "$T/cache/archives/partial"
 	stanza "$PROBE_KEY" > "$T/parts/probe.sources"
-	if ! apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/parts" \
+	if ! apt-get -q -c "$T/nohooks.conf" -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/parts" \
 		-o Dir::State::Lists="$T/lists" -o Dir::Cache="$T/cache" update >"$T/probe.log" 2>&1 ||
 		! ls "$T/lists/" 2>/dev/null | grep -q 'InRelease$' ||
 		! ls "$T/lists/" 2>/dev/null | grep -q "_dists_${suite}_main_binary-${ARCH}_Packages"; then
@@ -270,7 +273,7 @@ if [ $has_new = 0 ]; then
 		mkdir -p "$STATE"
 		touch "$STATE/move-pending"
 		systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-		[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
+		[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 		exit 0
 	fi
 fi
@@ -289,7 +292,7 @@ if [ $has_new = 1 ]; then
 			*) list_awk pick "$f" > "$T/own/$i.list" ;;
 		esac
 	done
-	apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/own" \
+	apt-get -q -c "$T/nohooks.conf" -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/own" \
 		-o Dir::State::Lists="$T/ownlists" -o Dir::Cache="$T/owncache" update >"$T/own.log" 2>&1 || true
 	# the InRelease, and main for this board's architecture (an entry with only non-free, or for another
 	# architecture, would leave nothing serving the renamed packages)
@@ -302,7 +305,7 @@ if [ $has_new = 1 ]; then
 		mkdir -p "$STATE"
 		touch "$STATE/move-pending"
 		systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-		[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
+		[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 		exit 0
 	fi
 fi
@@ -319,7 +322,7 @@ backup() { # FILE: the path its original is kept at, never one already taken
 # changes and cleared once the move is done
 touch "$STATE/move-pending"
 systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
+[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 
 # 1. the new source in place first, so the board never lacks one (a full disk stops here, before anything
 # changed). A board that already reads packages.libre.computer keeps its own entry: a second one with a
@@ -412,7 +415,7 @@ say "moved to packages.libre.computer ($suite); the old source files are in $STA
 # 4. the renames need apt, which is busy until this install finishes: the timer retries until they are
 # done, and a transient timer starts them 30 s from now
 if [ -d /run/systemd/system ]; then
-	systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
+	systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 	systemd-run --quiet --no-block --on-active=30 --unit="libre-computer-migrate-now-$stamp" \
 		systemctl start --no-block libre-computer-migrate.service >/dev/null 2>&1 ||
 		say "the renames run within minutes of the next boot"

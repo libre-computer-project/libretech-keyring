@@ -48,12 +48,16 @@ fi
 # and above the libretech-keyring deb.libre.computer serves now, or no board would take it as an upgrade
 if [[ -z $above ]]; then
 	# every suite deb.libre.computer serves (its Release files list them); the highest version in any
-	suites=$(curl -fsSL "https://deb.libre.computer/repo/dists/" | grep -o 'href="[a-z0-9-]*/"' | sed 's/href="//; s#/"##') ||
-		{ echo "could not list deb.libre.computer's suites; pass --above" >&2; exit 1; }
+	suites=$(curl -fsSL "https://deb.libre.computer/repo/dists/" | grep -o 'href="[^"/]*/"' | sed 's/href="//; s#/"##' |
+		grep -vx '\.\.\?') || { echo "could not list deb.libre.computer's suites; pass --above" >&2; exit 1; }
 	[[ -n $suites ]] || { echo "deb.libre.computer lists no suite; pass --above" >&2; exit 1; }
 	for s in $suites; do for a in arm64 armhf amd64; do
-		v=$(curl -fsSL "https://deb.libre.computer/repo/dists/$s/main/binary-$a/Packages.gz" 2>/dev/null | gzip -dc 2>/dev/null |
-			awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}') || v=""
+		# a suite that does not carry this architecture is skipped; one that does and cannot be read refuses
+		curl -fsSL "https://deb.libre.computer/repo/dists/$s/Release" 2>/dev/null |
+			grep -qE "^Architectures:.* $a( |$)" || continue
+		v=$(curl -fsSL "https://deb.libre.computer/repo/dists/$s/main/binary-$a/Packages.gz" | gzip -dc |
+			awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}') ||
+			{ echo "could not read deb.libre.computer $s $a; pass --above" >&2; exit 1; }
 		for x in $v; do
 			[[ -z $above ]] || dpkg --compare-versions "$x" gt "$above" && above=$x
 		done
