@@ -501,7 +501,9 @@ if [ $has_new = 0 ]; then
 	fi
 	# the record and the new file's content on disk before the rename: a power loss must find the one or the
 	# other whole, never an empty file under the source's name
-	sync "$C/before.log" "$C/path" "$C/backup" "$C/kind" "$C" "$tmp" 2>/dev/null || sync
+	# (the copy of the previous file too: it is what an undo puts back)
+	sync "$C/before.log" "$C/path" "$C/backup" "$C/kind" "$C" "$tmp" ${src_backup:+"$src_backup"} \
+		${src_link:+"$src_link"} "$STATE/moved-sources" 2>/dev/null || sync
 	mv -T "$tmp" "$real_src"
 	tmp=""
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
