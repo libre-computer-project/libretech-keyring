@@ -695,5 +695,51 @@ check "S48: the migration ended on its own (not the test's time limit)" test "$s
 check "S48: the others renamed, gpio kept under its old name, the migration pending" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-dtoverlay && ! installed libretech-dtoverlay && installed libretech-gpio && ! installed libre-computer-gpio && test -e '$mnt$S/migrate-pending'"
 cleanup
 
+echo "== S49: a move stopped between writing the new source and its readability check: the next run checks"
+check_record() { # KIND: the record step 1 leaves before the new file goes in (nothing was there before it)
+	mkdir -p "$mnt$S/sources-check"
+	: > "$mnt$S/sources-check/before.log"
+	: > "$mnt$S/sources-check/backup"
+	printf '%s' /etc/apt/sources.list.d/libre-computer.sources > "$mnt$S/sources-check/path"
+	echo "$1" > "$mnt$S/sources-check/kind"
+	touch "$mnt$S/move-pending"
+}
+setup
+check_record none
+# a new file apt refuses (no Suites), as the interrupted run left it
+printf 'Types: deb\nURIs: file:///srv/test-repo\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+# the move run as the timer's retry runs it (apt-get install would refuse these sources)
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+in_root sh /tmp/lc-move > "$W/s49.log" 2>&1
+check "S49: the unreadable file undone, deb.libre.computer kept, the record gone, the retry armed" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt$S/sources-check' && test -e '$mnt$S/move-pending' && grep -q 'apt cannot read the sources' '$W/s49.log' && chroot '$mnt' apt-get -q indextargets >/dev/null"
+cleanup
+setup
+check_record none
+install_keyring
+check "S49: a readable state passes the check: the record gone, the board moved" bash -c "test ! -e '$mnt$S/sources-check' && test -s '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/move-pending'"
+cleanup
+
+echo "== S50: old names left beside their new ones, one depending on another and one held: the free ones go in passes"
+setup
+install_keyring
+migrate s50a.log
+# transitional old names, as an owner's upgrade could leave them: dtoverlay's depends on gpio's
+dummy libretech-gpio "Depends: libre-computer-gpio"
+dummy libretech-dtoverlay "Depends: libretech-gpio, libre-computer-dtoverlay"
+dummy libretech-alsa-ucm-conf "Depends: alsa-ucm-conf-libre-computer"
+# at the new names' version: their Breaks (<< it) do not cover these
+for p in libretech-gpio libretech-dtoverlay libretech-alsa-ucm-conf; do
+	sed -i 's/^Version: 1$/Version: 2026.11.10/' "$W/pkg-$p/DEBIAN/control"
+	dpkg-deb --root-owner-group -b "$W/pkg-$p" "$mnt/tmp/$p.deb" >/dev/null
+done
+in_root dpkg -i /tmp/libretech-gpio.deb /tmp/libretech-dtoverlay.deb /tmp/libretech-alsa-ucm-conf.deb > "$W/s50b.log" 2>&1
+in_root apt-mark hold libretech-alsa-ucm-conf >/dev/null 2>&1
+touch "$mnt$S/migrate-pending"
+migrate s50.log
+s50rc=$?
+check "S50: the precondition: the three old names were in beside their new ones" grep -q 'removing libretech-gpio libretech-dtoverlay libretech-alsa-ucm-conf' "$W/s50.log"
+check "S50: ended on its own; gpio and dtoverlay gone, the held one kept, the migration pending" bash -c "$(declare -f installed); mnt='$mnt'; test $s50rc -lt 124 && ! installed libretech-gpio && ! installed libretech-dtoverlay && installed libretech-alsa-ucm-conf && installed libre-computer-gpio && test -e '$mnt$S/migrate-pending'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

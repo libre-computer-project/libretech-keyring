@@ -159,14 +159,21 @@ install_new() {
 	safe_apt install --no-install-recommends "$@"
 }
 # remove OLD...: together, or each on its own when apt refuses that (one held or refused name keeps only
-# itself); each attempt may remove only the names it was given
+# itself), in passes while a pass takes one out (a name may go only after another that depends on it); each
+# attempt may remove only the names it was given. (Its own names ro/rprog, as install_new's)
 remove_old() {
 	allow=" $* "
 	# shellcheck disable=SC2086
 	safe_apt remove "$@" && return 0
-	for o in "$@"; do
-		allow=" $o "
-		[ "$(st "$o")" != installed ] || safe_apt remove "$o" || true
+	rprog=1
+	while [ $rprog = 1 ]; do
+		rprog=0
+		for ro in "$@"; do
+			[ "$(st "$ro")" = installed ] || continue
+			allow=" $ro "
+			safe_apt remove "$ro" || true
+			[ "$(st "$ro")" = installed ] || rprog=1
+		done
 	done
 }
 

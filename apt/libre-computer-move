@@ -223,6 +223,47 @@ esac
 mkdir -p "$STATE"
 exec 9>"$STATE/.move.lock"
 flock 9
+T="" tmp=""
+trap '[ -z "$T" ] || rm -rf "$T"; [ -z "$tmp" ] || rm -f "$tmp"' EXIT
+trap 'exit 1' INT TERM HUP
+
+# step 1 below puts the new source in place, then asks apt whether it can still read the sources, and puts the
+# previous file back if not. The check's record (C) is written before the new file goes in and removed once the
+# check is done: a move stopped in between (or an undo that failed) is checked here, by the next run
+C=$STATE/sources-check
+undo_src() { # KIND BACKUP PATH: the previous libre-computer.sources back (file: its copy at PATH, which a
+	# symlink named; link: the link itself; none: there was none)
+	case $1 in
+	file)
+		tmp=$(mktemp "$3.lc-XXXXXX")
+		cp -p "$2" "$tmp"
+		mv -T "$tmp" "$3"
+		tmp="" ;;
+	link)
+		tmp=$(mktemp -u "$SRC.lc-XXXXXX")
+		cp -P "$2" "$tmp"
+		mv -T "$tmp" "$SRC"
+		tmp="" ;;
+	*) rm -f "$SRC" ;;
+	esac
+}
+new_errors() { # BEFORE AFTER: the E: lines apt prints now and did not before
+	grep '^E:' "$2" | grep -vxF -f "$1"
+}
+unreadable() { # BEFORE: say so, and the previous source back
+	undo_src "$(cat "$C/kind")" "$(cat "$C/backup")" "$(cat "$C/path")"
+	rm -rf "$C"
+	say "apt cannot read the sources with packages.libre.computer added beside the board's own entry for it; staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
+	grep -E '^(E|W):' "$1" | sed 's/^/  /' || true
+	exit 0
+}
+if [ -s "$C/kind" ]; then
+	T=$(mktemp -d)
+	apt-get -q -o Dir::Cache="$T" indextargets >/dev/null 2>"$T/after.log" || true
+	! new_errors "$C/before.log" "$T/after.log" >/dev/null || unreadable "$T/after.log"
+	rm -rf "$C" "$T"
+	T=""
+fi
 
 old="" has_new=0 newfiles=""
 for f in "$SL" "$SP"/*.list "$SP"/*.sources; do
@@ -262,12 +303,10 @@ systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 [ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 
 ARCH=$(dpkg --print-architecture)
-T=$(mktemp -d) tmp=""
-trap 'rm -rf "$T"; [ -z "$tmp" ] || rm -f "$tmp"' EXIT
+T=$(mktemp -d)
 # the scratch probes run none of apt's update hooks (appstream, packagekit, command-not-found): they would
 # refresh the system's caches from inside the postinst
 printf '#clear APT::Update::Pre-Invoke;\n#clear APT::Update::Post-Invoke;\n#clear APT::Update::Post-Invoke-Success;\n#clear APT::Update::Post-Invoke-Stats;\n#clear APT::Update::Auth-Failure;\n' > "$T/nohooks.conf"
-trap 'exit 1' INT TERM HUP
 chmod 755 "$T"
 stanza() { # KEY: the new source's stanza
 	printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: main non-free\nSigned-By: %s\n' "$URI" "$suite" "$1"
@@ -388,30 +427,29 @@ if [ $has_new = 0 ]; then
 		# a new file readable to every user (apt as a normal user reads the sources), whatever the umask
 		chmod 0644 "$tmp"
 	fi
+	# the check's record, before the new file goes in (kind last: its presence starts the check)
+	rm -rf "$C"
+	mkdir -p "$C"
+	cp "$T/before.log" "$C/before.log"
+	printf '%s' "$real_src" > "$C/path"
+	if [ -n "$src_backup" ]; then
+		printf '%s' "$src_backup" > "$C/backup"
+		echo file > "$C/kind"
+	elif [ -n "$src_link" ]; then
+		printf '%s' "$src_link" > "$C/backup"
+		echo link > "$C/kind"
+	else
+		: > "$C/backup"
+		echo none > "$C/kind"
+	fi
 	mv -T "$tmp" "$real_src"
 	tmp=""
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
 	# this script does not recognise (another scheme, deb-src only, another Signed-By) can make apt refuse
 	# every source beside the new one. Then nothing has changed yet: the previous file comes back
 	apt-get -q -o Dir::Cache="$T/icache" indextargets >/dev/null 2>"$T/after.log" || true
-	if ! cmp -s "$T/before.log" "$T/after.log" && grep -q '^E:' "$T/after.log"; then
-		if [ -n "$src_backup" ]; then
-			tmp=$(mktemp "$real_src.lc-XXXXXX")
-			cp -p "$src_backup" "$tmp"
-			mv -T "$tmp" "$real_src"
-			tmp=""
-		elif [ -n "$src_link" ]; then
-			tmp=$(mktemp -u "$SRC.lc-XXXXXX")
-			cp -P "$src_link" "$tmp"
-			mv -T "$tmp" "$SRC"
-			tmp=""
-		else
-			rm -f "$SRC"
-		fi
-		say "apt cannot read the sources with packages.libre.computer added beside the board's own entry for it; staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
-		grep -E '^(E|W):' "$T/after.log" | sed 's/^/  /' || true
-		exit 0
-	fi
+	! new_errors "$C/before.log" "$T/after.log" >/dev/null || unreadable "$T/after.log"
+	rm -rf "$C"
 fi
 
 # 2. the migration pending and its timer enabled, before the old entries go: an interruption from here
