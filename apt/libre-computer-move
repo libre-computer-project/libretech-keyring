@@ -42,10 +42,19 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 list_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
 		# (a path naming it first -- a caching proxy, or a local mirror of the frozen repo -- counts too)
-		function isours(u,   p, h) {
+		# the path after a caching proxy host, its HTTPS/// (the apt-cacher-ng form for an https repo) taken off
+		function proxied(u) {
+			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
+			if (!index(u, "/")) return ""
+			u = substr(u, index(u, "/") + 1); sub(/^\/+/, "", u); sub(/^https?\/+/, "", u); sub(/\/+$/, "", u)
+			return u
+		}
+		function isours(u,   p, h, r) {
+			r = proxied(u)
 			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
 			split(u, p, "/"); h = p[1]; sub(/^.*@/, "", h); sub(/:.*$/, "", h)
-			return h == "deb.libre.computer" || p[2] == "deb.libre.computer"
+			split(r, p, "/")
+			return h == "deb.libre.computer" || p[1] == "deb.libre.computer"
 		}
 		function norm(u,   p, h, r) {
 			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u)
@@ -55,7 +64,7 @@ list_awk() { # MODE FILE
 			return h r
 		}
 		# the new repository, directly or through a caching proxy whose path names it first
-		function isnew(u) { u = norm(u); if (u == new) return 1; sub(/^[^\/]*\//, "", u); return u == new }
+		function isnew(u) { return norm(u) == new || proxied(u) == new }
 		{ sub(/\r$/, "") }
 		{
 			raw = $0; body = $0
@@ -100,10 +109,19 @@ list_awk() { # MODE FILE
 sources_awk() { # MODE FILE
 	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
 		# (a path naming it first -- a caching proxy, or a local mirror of the frozen repo -- counts too)
-		function isours(u,   p, h) {
+		# the path after a caching proxy host, its HTTPS/// (the apt-cacher-ng form for an https repo) taken off
+		function proxied(u) {
+			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
+			if (!index(u, "/")) return ""
+			u = substr(u, index(u, "/") + 1); sub(/^\/+/, "", u); sub(/^https?\/+/, "", u); sub(/\/+$/, "", u)
+			return u
+		}
+		function isours(u,   p, h, r) {
+			r = proxied(u)
 			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:\/*/, "", u)
 			split(u, p, "/"); h = p[1]; sub(/^.*@/, "", h); sub(/:.*$/, "", h)
-			return h == "deb.libre.computer" || p[2] == "deb.libre.computer"
+			split(r, p, "/")
+			return h == "deb.libre.computer" || p[1] == "deb.libre.computer"
 		}
 		function norm(u,   p, h, r) {
 			u = tolower(u); sub(/^[a-z][a-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u)
@@ -113,7 +131,7 @@ sources_awk() { # MODE FILE
 			return h r
 		}
 		# the new repository, directly or through a caching proxy whose path names it first
-		function isnew(u) { u = norm(u); if (u == new) return 1; sub(/^[^\/]*\//, "", u); return u == new }
+		function isnew(u) { return norm(u) == new || proxied(u) == new }
 		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd, hn) {
 			if (n == 0) return
 			v = uris; sub(/^[^:]*:/, "", v)
@@ -350,12 +368,17 @@ if [ $has_new = 0 ]; then
 	# into the file itself, or the regular file a symlink names (the link stays a link)
 	real_src=$SRC
 	[ ! -L "$SRC" ] || [ ! -f "$SRC" ] || real_src=$(readlink -f "$SRC")
-	# an existing file's mode and owner kept: the new content goes into a copy of it
-	[ ! -f "$real_src" ] || cp -p "$real_src" "$real_src.new"
-	cat "$T/src" > "$real_src.new"
-	# a new file readable to every user (apt as a normal user reads the sources), whatever the umask
-	[ -f "$real_src" ] || chmod 0644 "$real_src.new"
-	mv -T "$real_src.new" "$real_src"
+	# an existing file's mode and owner kept; the temporary file has a fresh name (never an existing file or link)
+	tmp=$(mktemp "$real_src.lc-XXXXXX")
+	cat "$T/src" > "$tmp"
+	if [ -f "$real_src" ]; then
+		chmod --reference="$real_src" "$tmp"
+		chown --reference="$real_src" "$tmp"
+	else
+		# a new file readable to every user (apt as a normal user reads the sources), whatever the umask
+		chmod 0644 "$tmp"
+	fi
+	mv -T "$tmp" "$real_src"
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
 	# this script does not recognise (another scheme, deb-src only, another Signed-By) can make apt refuse
 	# every source beside the new one. Then nothing has changed yet: the previous file comes back
@@ -405,9 +428,11 @@ for f in $old; do
 		*.sources) sources_awk disable "$f" > "$T/edited" ;;
 		*) list_awk disable "$f" > "$T/edited" ;;
 	esac
-	cp -p "$real" "$real.lc-new"
-	cat "$T/edited" > "$real.lc-new"
-	mv "$real.lc-new" "$real"
+	tmp=$(mktemp "$real.lc-XXXXXX")
+	cat "$T/edited" > "$tmp"
+	chmod --reference="$real" "$tmp"
+	chown --reference="$real" "$tmp"
+	mv -T "$tmp" "$real"
 done
 retry_off
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
