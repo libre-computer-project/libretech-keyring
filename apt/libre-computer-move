@@ -15,8 +15,9 @@ set -eu
 URI=${LC_PACKAGES_URI:-https://packages.libre.computer/deb}
 KEY=/usr/share/keyrings/libre-computer-deb.gpg
 PROBE_KEY=${LC_PACKAGES_KEY:-$KEY}
-# the repository with its scheme taken off: an entry naming it over http or https is the same repository to apt
-URIHOST=${URI#*://}
+# the repository without its scheme and its leading and trailing slashes: an entry naming it over http or https,
+# or as file:/ for file:///, is the same repository to apt; compared whole (.../deb-testing is another one)
+URIN=$(printf '%s' "$URI" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*:##; s#^/+##; s#/+$##')
 SRC=/etc/apt/sources.list.d/libre-computer.sources
 STATE=/var/lib/libre-computer-archive-keyring
 PKG=${DPKG_MAINTSCRIPT_PACKAGE:-libre-computer-archive-keyring}
@@ -28,7 +29,8 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 # entries for any other repository, or commented-out entries (content that must stay); new: an active deb
 # entry for packages.libre.computer and the board's suite; disable: the file with ours commented out
 list_awk() { # MODE FILE
-	awk -v mode="$1" -v new="$URIHOST" -v suite="$suite" '
+	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
+		function norm(u) { sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u); return u }
 		{ sub(/\r$/, "") }
 		{
 			raw = $0; body = $0
@@ -43,7 +45,7 @@ list_awk() { # MODE FILE
 			libre = entry && uri ~ /deb\.libre\.computer/
 			if (entry && mode == "ours" && !commented && libre) c++
 			if (entry && mode == "other" && (commented || !libre)) c++
-			if (entry && mode == "new" && !commented && type == "deb" && index(uri, new) && dist == suite) c++
+			if (entry && mode == "new" && !commented && type == "deb" && norm(uri) == new && dist == suite) c++
 			if (mode == "disable") {
 				if (entry && !commented && libre) print "# moved to packages.libre.computer: " raw
 				else print raw
@@ -60,8 +62,9 @@ list_awk() { # MODE FILE
 # frozen repo is taken out of it counts: the stanza stays a source); disable: the file with the frozen repo taken out of each
 # enabled stanza (the stanza disabled when it named nothing else, its other URIs kept when it did)
 sources_awk() { # MODE FILE
-	awk -v mode="$1" -v new="$URIHOST" -v suite="$suite" '
-		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd) {
+	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
+		function norm(u) { sub(/^[A-Za-z][A-Za-z0-9+.-]*:/, "", u); sub(/^\/+/, "", u); sub(/\/+$/, "", u); return u }
+		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd, hn) {
 			if (n == 0) return
 			v = uris; sub(/^[^:]*:/, "", v)
 			ntok = split(v, t, /[[:space:]]+/); keep = ""; libre = 0; oth = 0
@@ -79,7 +82,10 @@ sources_awk() { # MODE FILE
 			hd = 0
 			ntok = split(types, t, /[[:space:]]+/)
 			for (k = 1; k <= ntok; k++) if (t[k] == "deb") hd = 1
-			if (mode == "new" && !off && index(v, new) && hs && hd) c++
+			hn = 0
+			ntok = split(v, t, /[[:space:]]+/)
+			for (k = 1; k <= ntok; k++) if (t[k] != "" && norm(t[k]) == new) hn = 1
+			if (mode == "new" && !off && hn && hs && hd) c++
 			if (mode == "disable") {
 				for (k = 1; k <= n; k++) {
 					if (mine && oth && isuri[k]) continue
@@ -133,13 +139,13 @@ case "${ID:-}:${VERSION_CODENAME:-}" in
 esac
 
 # the files with an enabled entry for the frozen repo, and whether the board already reads the new one
-old="" has_new=0
+old="" has_new=0 newfiles=""
 for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
 	[ -f "$f" ] || continue
 	# only a file apt reads: it skips a name with any character outside letters, digits, _ - . : (so no
 	# name with a space reaches the loops below)
 	case ${f##*/} in *[!A-Za-z0-9_.:-]*) continue ;; esac
-	[ "$(count new "$f")" -eq 0 ] || has_new=1
+	[ "$(count new "$f")" -eq 0 ] || { has_new=1; newfiles="$newfiles $f"; }
 	[ "$(count ours "$f")" -gt 0 ] || continue
 	old="$old $f"
 done
@@ -190,6 +196,31 @@ if ! apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/p
 	exit 0
 fi
 
+# a board that already has an entry for packages.libre.computer keeps it (step 1 writes none): that entry,
+# with its own key, must work too, or the board would be left with no working Libre Computer source once the
+# old entries go. apt updates those files alone into scratch lists; the new repository's InRelease must be in
+if [ $has_new = 1 ]; then
+	mkdir -p "$T/own" "$T/ownlists/partial" "$T/owncache/archives/partial"
+	! id _apt >/dev/null 2>&1 || chown _apt "$T/ownlists/partial" "$T/owncache/archives/partial"
+	i=0
+	for f in $newfiles; do
+		i=$((i + 1))
+		case $f in *.sources) cp "$f" "$T/own/$i.sources" ;; *) cp "$f" "$T/own/$i.list" ;; esac
+	done
+	apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/own" \
+		-o Dir::State::Lists="$T/ownlists" -o Dir::Cache="$T/owncache" update >"$T/own.log" 2>&1 || true
+	want=$(printf '%s' "$URIN" | tr / _)_dists_${suite}_InRelease
+	if ! ls "$T/ownlists/" 2>/dev/null | grep -qF -- "$want"; then
+		say "the board's own entry for packages.libre.computer is not usable (its key, or the network); staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
+		grep -E '^(E|W|Err):' "$T/own.log" | sed 's/^/  /' || true
+		mkdir -p "$STATE"
+		touch "$STATE/move-pending"
+		systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+		[ ! -d /run/systemd/system ] || systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
+		exit 0
+	fi
+fi
+
 mkdir -p "$STATE/moved-sources"
 stamp=$(date +%Y%m%d%H%M%S)
 backup() { # FILE: the path its original is kept at
@@ -216,13 +247,16 @@ if [ $has_new = 0 ]; then
 		src_backup=$(backup "$SRC")
 		cp -p "$SRC" "$src_backup"
 	fi
-	cat "$T/src" > "$SRC.new"
-	mv "$SRC.new" "$SRC"
+	# into the file itself, or the file a symlink names (the link stays a link)
+	real_src=$SRC
+	[ ! -L "$SRC" ] || real_src=$(readlink -f "$SRC")
+	cat "$T/src" > "$real_src.new"
+	mv "$real_src.new" "$real_src"
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
 	# this script does not recognise (another scheme, deb-src only, another Signed-By) can make apt refuse
 	# every source beside the new one. Then nothing has changed yet: the previous file comes back
 	if [ $readable_before = 1 ] && ! apt-get -q indextargets >"$T/after.log" 2>&1; then
-		if [ -n "$src_backup" ]; then cp -p "$src_backup" "$SRC"; else rm -f "$SRC"; fi
+		if [ -n "$src_backup" ]; then cp -p "$src_backup" "$real_src"; else rm -f "$SRC"; fi
 		say "apt cannot read the sources with packages.libre.computer added beside the board's own entry for it; staying on deb.libre.computer. apt said:"
 		grep -E '^(E|W):' "$T/after.log" | sed 's/^/  /' || true
 		retry_off

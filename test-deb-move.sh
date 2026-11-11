@@ -575,5 +575,25 @@ migrate s34.log
 check "S34: the kernel's old name goes while the held rename waits" bash -c "$(declare -f installed); mnt='$mnt'; ! installed linux-image-lc-lts-arm && installed linux-image-lc-lts-armhf && installed libretech-alsa-ucm-conf && test -e '$mnt$S/migrate-pending'"
 cleanup
 
+echo "== S35: libre-computer.sources is a symlink (naming deb.libre.computer): written through the link"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+mkdir -p "$mnt/etc/apt/lists-real"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo\nSuites: linux\nComponents: main\n' > "$mnt/etc/apt/lists-real/lc.sources"
+ln -s /etc/apt/lists-real/lc.sources "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+install_keyring
+check "S35: still a symlink, its target the new source" bash -c "test -L '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'URIs: file:///srv/test-repo' '$mnt/etc/apt/lists-real/lc.sources' && test -e '$mnt$S/migrate-pending'"
+cleanup
+
+echo "== S36: the board's own packages.libre.computer entry names a key it lacks: nothing moves, retried"
+setup
+echo 'deb [signed-by=/usr/share/keyrings/gone.gpg] file:///srv/test-repo trixie main' > "$mnt/etc/apt/sources.list.d/mine.list"
+install_keyring
+check "S36: stays on deb.libre.computer, the move retried by the timer" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/move-pending' && test ! -e '$mnt$S/migrate-pending' && grep -q 'own entry for packages.libre.computer is not usable' '$W/dpkg.log'"
+cleanup
+
+echo "== S37: the transitional libretech-keyring Pre-Depends on libre-computer-archive-keyring"
+check "S37: Pre-Depends, so the shared files are taken over before it unpacks" bash -c "dpkg-deb -f '$trans_keyring' Pre-Depends | grep -q '^libre-computer-archive-keyring (= '"
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
