@@ -194,8 +194,15 @@ if [ -e "$STATE/migrate-pending" ]; then
 			# that cannot go in (held, missing, or removing something else) does not hold back the others
 			# shellcheck disable=SC2086
 			if ! install_new $new; then
-				for n in $new; do
-					[ "$(st "$n")" = installed ] || install_new "$n" || true
+				# one by one, in passes while a pass gets one in: one name may go in only after another (its
+				# old name depends on the other's old name, which it may remove only once that one's new name is in)
+				progress=1
+				while [ $progress = 1 ]; do
+					progress=0
+					for n in $new; do
+						[ "$(st "$n")" != installed ] || continue
+						! install_new "$n" || progress=1
+					done
 				done
 			fi
 		fi
