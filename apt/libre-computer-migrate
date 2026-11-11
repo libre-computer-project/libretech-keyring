@@ -29,10 +29,10 @@ export LC_ALL=C
 GUARD=/usr/lib/libre-computer-archive-keyring/libre-computer-rename-guard
 APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o APT::Install-Suggests=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
 W=$(mktemp -d)
+# readable by _apt, which apt-get download (keyring_swap) fetches as
+chmod 755 "$W"
 # the "renaming" mark is held only while an apt run of the renames is under way (safe_apt): the old package's
-# postrm then keeps the timer and the state for the rename; any other time, a removal is the owner's.
-# broke: an apt run of this one's failed past its locks (dpkg may be half-done; see "unfinished" in safe_apt)
-broke=0
+# postrm then keeps the timer and the state for the rename; any other time, a removal is the owner's
 trap 'rm -rf "$W"; rm -f "$STATE/renaming"' EXIT
 # a stop (shutdown) while apt or dpkg runs: the shell runs this once that command has finished, so dpkg is
 # never left half-done by us (the unit's KillMode=process signals this script alone)
@@ -42,13 +42,29 @@ st() { ! dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null | grep -qx in
 # pr PACKAGE: true if any architecture of it is on the board in any state but removed (installed, or left
 # unpacked, half-configured -- as an old keyring deconfigured by keyring_swap is)
 pr() { dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null | grep -qvxE 'not-installed|config-files'; }
-# partdone: " NAME..." of the packages dpkg holds part-done (unpacked, half-installed, half-configured, awaiting
-# triggers), less the renames' own old and new names
+# "unfinished" ($STATE/unfinished, one name a line): every package a run of this script's that changes dpkg's
+# state was about to touch, written before the run (run_begin). What of these a power loss, a kill or a dpkg
+# error left part-done is ours to finish, and only that; the list goes once none of it is part-done
+listed() { [ ! -s "$STATE/unfinished" ] || tr '\n' ' ' < "$STATE/unfinished"; }
+# ours: " NAME ..." -- the renames' own old and new names, and the listed ones
+ours() {
+	printf ' '
+	for p in $pairs $kpairs; do printf '%s %s ' "${p%%:*}" "${p#*:}"; done
+	listed
+}
+# partdone others | listed: " NAME..." of the packages dpkg holds part-done (unpacked, half-installed,
+# half-configured, awaiting triggers): others -- not ours (someone else's, the owner's to finish); listed --
+# listed and not an old name (an old name part-done, as the keyring keyring_swap deconfigures, is on its way
+# out, not to be configured)
 partdone() {
 	dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' 2>/dev/null |
-		awk -v ours=" $(for p in $pairs $kpairs; do printf '%s %s ' "${p%%:*}" "${p#*:}"; done)" '
+		awk -v ours="$(ours)" -v listed=" $(listed) " -v old=" $(for p in $pairs $kpairs; do printf '%s ' "${p%%:*}"; done)" -v mode="$1" '
 			$1 == "installed" || $1 == "not-installed" || $1 == "config-files" { next }
-			{ n = $2; sub(/:.*/, "", n); if (index(ours, " " n " ") == 0) printf " %s", $2 }'
+			{
+				n = $2; sub(/:.*/, "", n); k = " " n " "
+				if (mode == "others") { if (index(ours, k) == 0) printf " %s", $2 }
+				else if (index(listed, k) > 0 && index(old, k) == 0) printf " %s", $2
+			}'
 }
 
 # old name -> new name (the package-naming policy's table). kpairs: kernel meta-packages, never installed
@@ -85,25 +101,31 @@ idle() { wait_lock apt-get -q check || true; }
 
 # safe_apt ARGS: apt-get ARGS, only if its plan removes nothing but the names in $allow (set by the caller). The plan is read
 # again before every attempt: while a lock is held, another apt may change what this one would do
-# run_begin / run_end RC: around each run of this script's that changes dpkg's state (apt's, or keyring_swap's
-# dpkg), its output in $W/out. "renaming": this boot, this script's pid and its start time (a pid can be reused
-# in the same boot), so a mark a power loss or a kill left is not a rename under way -- "-" for a value it cannot
-# read, as the postrm reads them (the start time: the 20th field after the ") " that ends the command name in
-# stat). "unfinished": what the run leaves half-done in dpkg (a power loss, a kill, a dpkg error) is ours to
-# finish; it goes only when no run of this one's has failed past its start since it was set
+# run_begin NAME... / run_end: around each run of this script's that changes dpkg's state (apt's, or
+# keyring_swap's dpkg). NAME...: the packages it is about to touch, added to "unfinished" before it starts.
+# "renaming": this boot, this script's pid and its start time (a pid can be reused in the same boot), so a mark
+# a power loss or a kill left is not a rename under way -- "-" for a value it cannot read, as the postrm reads
+# them (the start time: the 20th field after the ") " that ends the command name in stat)
 run_begin() {
 	mkdir -p "$STATE"
+	printf '%s\n' "$@" >> "$STATE/unfinished"
 	bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
 	bst=$(sed 's/.*) //' "/proc/$$/stat" 2>/dev/null | cut -d' ' -f20 || true)
 	echo "${bid:--} $$ ${bst:--}" > "$STATE/renaming"
-	touch "$STATE/unfinished"
 }
-run_end() {
-	rm -f "$STATE/renaming"
-	# a failure that came before dpkg ran (a lock, the guard, or dpkg left interrupted by someone else, which
-	# apt and dpkg check when they take the lock) left nothing of ours half-done; any other may have
-	[ "$1" = 0 ] || is_locked || grep -qE '^libre-computer-rename-guard: |dpkg was interrupted' "$W/out" || broke=1
-	[ $broke = 1 ] || rm -f "$STATE/unfinished"
+run_end() { rm -f "$STATE/renaming"; }
+# record_pending NEW...: each new name's mark-to-be (its old name's), recorded just before the run that installs
+# it, which also marks the rename as begun: keep_mark sets the mark, or the next run does if this one stops in
+# between; the next run also installs a new name whose rename a stop cut short after apt had taken the old name
+# (a record whose old name is gone is left as it is). Its own names (qp/qo/qn): sh has no local variables
+pend=""
+record_pending() {
+	for qp in $pairs; do
+		qo=${qp%%:*} qn=${qp#*:}
+		case " $* " in *" $qn "*) ;; *) continue ;; esac
+		pr "$qo" || continue
+		case $autos in *" $qo "*) echo auto ;; *) echo manual ;; esac > "$STATE/pending-$qn"
+	done
 }
 safe_apt() {
 	si=0 replanned=0
@@ -130,24 +152,27 @@ safe_apt() {
 			return 1
 		fi
 		# apt configures what it unpacks with a closing dpkg --configure --pending, which would also configure
-		# a package someone else left unpacked or half-configured: such a board waits for its owner. (The
-		# renames' own names are not someone else's: keyring_swap leaves the old keyring deconfigured)
-		others=$(partdone)
+		# a package someone else left unpacked or half-configured: such a board waits for its owner (ours --
+		# the renames' names and the listed ones -- are not someone else's). The guard checks this again
+		# inside apt's run, its locks held
+		others=$(partdone others)
 		if [ -n "$others" ]; then
 			say "dpkg has packages left part-done:$others; not the renames' to finish, so they wait (will retry)"
 			return 1
 		fi
-		run_begin
+		[ -z "$pend" ] || record_pending $pend
+		# shellcheck disable=SC2046
+		run_begin $(awk '$1 == "Inst" || $1 == "Conf" || $1 == "Remv" || $1 == "Purg" {n = $2; sub(/:.*/, "", n); print n}' "$W/plan")
 		# shellcheck disable=SC2086
-		# the same guard inside apt's run (its plan then final, its locks held): another apt may have changed
+		# the same guards inside apt's run (its plan then final, its locks held): another apt may have changed
 		# the board since the plan above
-		if LC_RENAME_ALLOW="$allow" $APT -o "DPkg::Pre-Install-Pkgs::=$GUARD" -o "DPkg::Tools::Options::$GUARD::Version=2" \
-			"$@" >"$W/out" 2>&1; then
-			run_end 0
+		if LC_RENAME_ALLOW="$allow" LC_RENAME_OURS="$(ours)" $APT -o "DPkg::Pre-Install-Pkgs::=$GUARD" \
+			-o "DPkg::Tools::Options::$GUARD::Version=2" "$@" >"$W/out" 2>&1; then
+			run_end
 			cat "$W/out"
 			return 0
 		fi
-		run_end 1
+		run_end
 		if is_locked && [ $si -lt 240 ]; then
 			si=$((si + 1))
 			sleep 30
@@ -218,7 +243,10 @@ install_new() {
 		case " $* " in *" $in_ "*) allow="$allow$io " ; continue ;; esac
 		[ "$(st "$in_")" != installed ] || allow="$allow$io "
 	done
-	safe_apt install --no-install-recommends "$@"
+	pend="$*"
+	safe_apt install --no-install-recommends "$@" && pend="" && return 0
+	pend=""
+	return 1
 }
 # keyring_swap: libretech-keyring -> libre-computer-archive-keyring, by dpkg itself. apt would remove
 # libretech-keyring (its key, this script, the guard, the timer) before unpacking its replacement, and a stop in
@@ -237,12 +265,15 @@ keyring_swap() {
 	fi
 	set -- "$W/dl"/libre-computer-archive-keyring_*.deb
 	[ -f "$1" ] || { say "apt fetched no libre-computer-archive-keyring; will retry"; return 1; }
-	run_begin
+	# (no other apt or dpkg running first: the record is the rename's start, not a wait's)
+	idle
+	record_pending libre-computer-archive-keyring
+	run_begin libre-computer-archive-keyring libretech-keyring
 	if wait_lock dpkg --auto-deconfigure --force-confold --force-confdef -i "$1"; then
-		run_end 0
+		run_end
 		return 0
 	fi
-	run_end 1
+	run_end
 	say "dpkg could not install libre-computer-archive-keyring; will retry:"
 	tail -n 15 "$W/out" | sed 's/^/  /'
 	return 1
@@ -278,21 +309,28 @@ if [ -e "$STATE/move-pending" ]; then
 	[ -e "$STATE/move-pending" ] || [ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || exit 0
 fi
 
-# what an apt run of this script's left half-done (a power loss, a kill, a dpkg error: "unfinished") is finished
-# first. A package someone else left half-done is the owner's: this script does not configure it (apt then
-# refuses to plan the renames, and the timer tries again)
-if [ -e "$STATE/unfinished" ]; then
-	if wait_lock dpkg --configure -a --force-confold --force-confdef; then
-		rm -f "$STATE/unfinished"
-	else
-		say "dpkg --configure -a failed; will retry:"
-		tail -n 15 "$W/out" | sed 's/^/  /'
-		# (still ours to finish: no later step of this run may clear the mark)
-		failed=1 dpkg_broken=1 broke=1
+# what a run of this script's left part-done ("unfinished": a power loss, a kill, a dpkg error) is finished
+# first, and only that: dpkg configures the listed packages it holds unpacked or half-configured, and apt
+# reinstalls one left half-installed (which dpkg cannot configure). A package someone else left part-done is the
+# owner's: the renames wait for it (safe_apt). The list goes once nothing on it is part-done
+idle
+mine=$(partdone listed)
+if [ -n "$mine" ]; then
+	say "finishing what an earlier run left part-done:$mine"
+	# shellcheck disable=SC2086
+	wait_lock dpkg --configure --force-confold --force-confdef $mine || true
+	for x in $(partdone listed); do
+		dpkg-query -W -f '${db:Status-Status}\n' "$x" 2>/dev/null | grep -qx half-installed || continue
+		allow=" "
+		safe_apt install --reinstall --no-install-recommends "$x" || true
+	done
+	mine=$(partdone listed)
+	if [ -n "$mine" ]; then
+		say "still part-done:$mine; will retry"
+		failed=1 dpkg_broken=1
 	fi
-else
-	idle
 fi
+[ -n "$mine" ] || rm -f "$STATE/unfinished"
 # the marks as they are now that dpkg is free (an apt run that installed the keyring may have just ended)
 snapshot
 
@@ -322,15 +360,7 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 		done
 		if [ -n "$new" ]; then
 			say "installing$new (in place of their old names)"
-			# each new name's mark-to-be, recorded before apt takes the old names (a record an earlier run left,
-			# its old name gone, is kept): keep_mark below sets it, or the next run does if this one stops in
-			# between (then the old name is gone from its snapshot). It also marks the rename as begun
-			for p in $pairs; do
-				o=${p%%:*} n=${p#*:}
-				case "$new " in *" $n "*) ;; *) continue ;; esac
-				pr "$o" || continue
-				case $autos in *" $o "*) echo auto ;; *) echo manual ;; esac > "$STATE/pending-$n"
-			done
+			# (each new name's mark-to-be is recorded just before the run that installs it: record_pending)
 			# the keyring by dpkg itself (keyring_swap), never by apt
 			case "$new " in
 				*" libre-computer-archive-keyring "*)

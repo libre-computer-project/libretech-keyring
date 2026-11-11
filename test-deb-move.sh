@@ -317,8 +317,9 @@ setup
 install_keyring
 dummy half-done
 in_root dpkg --unpack /tmp/half-done.deb >/dev/null 2>&1
-# left by an apt run of the migration's (its unfinished mark): ours to finish (S55: someone else's is not)
-touch "$mnt$S/unfinished"
+# left by an apt run of the migration's (listed in its unfinished record): ours to finish (S55: someone else's
+# is not)
+echo half-done > "$mnt$S/unfinished"
 echo 'deb [trusted=yes] file:///srv/gone ./' > "$mnt/etc/apt/sources.list.d/gone.list"
 cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 if [[ -x $mnt/usr/bin/python3 ]]; then
@@ -831,18 +832,22 @@ chmod 755 "$d/DEBIAN/postinst"
 dpkg-deb --root-owner-group -b "$d" "$mnt/tmp/owner-broken.deb" >/dev/null
 in_root dpkg -i /tmp/owner-broken.deb > "$W/s55a.log" 2>&1
 check "S55: the precondition: owner-broken half-configured, its postinst run once" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' owner-broken | grep -qx half-configured && [ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ]"
+# and a record an earlier run of the migration's left (one that failed before dpkg ran, say): it lists only ours
+echo libre-computer-gpio > "$mnt$S/unfinished"
 migrate s55.log
-check "S55: the migration did not configure it (its postinst not run again)" bash -c "[ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ]"
+check "S55: the migration did not configure it (its postinst not run again); the renames wait, saying why" bash -c "[ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ] && grep -q 'part-done: *owner-broken' '$W/s55.log' && test -e '$mnt$S/migrate-pending'"
+migrate s55b.log
+check "S55: a second run neither (the record is not a licence)" bash -c "[ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ]"
 cleanup
 
-echo "== S56: a package an apt run of the migration's left unpacked (its unfinished mark): the next run configures it"
+echo "== S56: a package an apt run of the migration's left unpacked (listed in its unfinished record): the next run configures it"
 setup
 install_keyring
 dummy lc-left
 in_root dpkg --unpack /tmp/lc-left.deb > "$W/s56a.log" 2>&1
-touch "$mnt$S/unfinished"
+echo lc-left > "$mnt$S/unfinished"
 migrate s56.log
-check "S56: lc-left configured, the mark gone" bash -c "$(declare -f installed); mnt='$mnt'; installed lc-left && test ! -e '$mnt$S/unfinished'"
+check "S56: lc-left configured, the record gone (nothing on it part-done)" bash -c "$(declare -f installed); mnt='$mnt'; installed lc-left && test ! -e '$mnt$S/unfinished'"
 cleanup
 
 echo "== S57: the board's own entry written with a doubled slash in its path is its own entry"
