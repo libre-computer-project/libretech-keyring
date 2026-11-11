@@ -49,15 +49,16 @@ pr() {
 	ps_=$(dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null) || { rc_=$?; [ "$rc_" != 1 ]; return; }
 	printf '%s\n' "$ps_" | grep -qvxE 'not-installed|config-files'
 }
-# never_began OLD NEW: true only if dpkg-query answers for both, every architecture of OLD whole (installed, or
-# only awaiting triggers) and NEW not on the board at all (not installed or config-files only, or unknown) -- a
-# rename record (pending-NEW) is dropped on nothing less. A failing query, an old name part-way out (half-
-# configured or half-installed in the rename's own removal) or a new name part-way in keeps it: a record is the
-# one trace of a rename that took the old name and never brought the new one
+# never_began OLD NEW: true only if dpkg-query answers for both, OLD whole on the board (an architecture of it
+# installed or only awaiting triggers, none part-done; one not on the board, config-files or not-installed, is
+# no part of it) and NEW not on the board at all (not installed or config-files only, or unknown) -- a rename
+# record (pending-NEW) is dropped on nothing less. A failing query, an old name part-way out (half-configured
+# or half-installed in the rename's own removal) or a new name part-way in keeps it: a record is the one trace
+# of a rename that took the old name and never brought the new one
 never_began() {
 	os_=$(dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null) || return 1
-	[ -n "$os_" ] || return 1
-	! printf '%s\n' "$os_" | grep -qvxE 'installed|triggers-awaited|triggers-pending' || return 1
+	printf '%s\n' "$os_" | grep -qxE 'installed|triggers-awaited|triggers-pending' || return 1
+	! printf '%s\n' "$os_" | grep -qvxE 'installed|triggers-awaited|triggers-pending|not-installed|config-files' || return 1
 	if ns_=$(dpkg-query -W -f '${db:Status-Status}\n' "$2" 2>/dev/null); then
 		! printf '%s\n' "$ns_" | grep -qvxE 'not-installed|config-files'
 	else
@@ -301,9 +302,11 @@ install_new() {
 # keyring_swap: libretech-keyring -> libre-computer-archive-keyring, by dpkg itself. apt would remove
 # libretech-keyring (its key, this script, the guard, the timer) before unpacking its replacement, and a stop in
 # between would leave the board with neither and nothing to try again. dpkg unpacking the new package over the
-# old (Replaces) takes each file over in place; the old one, deconfigured (its Breaks), keeps only its
-# documentation and goes with the removals below. The package is fetched by apt (checked against the signed
-# index) and has no dependencies; nothing else can go: dpkg removes only a package whose every file is taken
+# old (Replaces) takes each file over in place. The deb.libre.computer libretech-keyring ships no file the new
+# one does not, so dpkg drops it as replaced completely (its postrm called with "disappear"); one that kept a
+# file of its own would stay deconfigured (its Breaks) and go with the removals below. The package is fetched
+# by apt (checked against the signed index) and has no dependencies; nothing else can go: dpkg removes only a
+# package whose every file is taken
 keyring_swap() {
 	rm -rf "$W/dl"
 	mkdir "$W/dl"
@@ -470,13 +473,12 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 			# shellcheck disable=SC2086
 			keep_mark $pairs
 		fi
-		# left: an old name still here, or a rename begun and not finished (its new name not in)
+		# left: an old name still here, or a rename begun and not finished -- its record still there (its new name
+		# not in, or in without the old name's mark yet: keep_mark removes the record once the mark is set)
 		left=""
 		for p in $pairs; do
 			o=${p%%:*} n=${p#*:}
-			if pr "$o"; then
-				left="$left $o"
-			elif [ -s "$STATE/pending-$n" ] && [ "$(st "$n")" != installed ]; then
+			if pr "$o" || [ -s "$STATE/pending-$n" ]; then
 				left="$left $o"
 			fi
 		done

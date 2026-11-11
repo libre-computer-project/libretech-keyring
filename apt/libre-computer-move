@@ -242,8 +242,8 @@ newtmp() { # PATH [name]: tmp set to a fresh name beside PATH, listed, then crea
 	# created, for cp -P to make)
 	tmp=$(mktemp -u "$1.libre-computer-move.XXXXXX")
 	printf '%s\n' "$tmp" >> "$TEMPS"
-	# (the list on disk before the file exists)
-	sync "$TEMPS" 2>/dev/null || sync
+	# (the list on disk before the file exists, its directory entry too)
+	sync "$TEMPS" "$STATE" 2>/dev/null || sync
 	[ "${2:-}" = name ] || (set -C; : > "$tmp")
 }
 if [ -s "$TEMPS" ]; then
