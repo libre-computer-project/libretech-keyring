@@ -938,7 +938,9 @@ cleanup
 echo "== S64: a power loss while dpkg removed an old name: the migration waits for the journal, then takes the old name out itself"
 setup
 install_keyring
-# what the cut-short removal left: the old name half-installed in dpkg's journal
+# what the cut-short removal left: apt removes the dependent first (libretech-dtoverlay depends on
+# libretech-gpio), then the old name, which the power loss left half-installed in dpkg's journal
+in_root env DEBIAN_FRONTEND=noninteractive dpkg -r libretech-dtoverlay > "$W/s64a.log" 2>&1
 mkdir -p "$mnt/var/lib/dpkg/updates"
 chroot "$mnt" dpkg-query -s libretech-gpio | sed 's/^Status: .*/Status: install ok half-installed/' > "$mnt/var/lib/dpkg/updates/0000"
 migrate s64.log
