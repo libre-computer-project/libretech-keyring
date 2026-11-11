@@ -1,34 +1,42 @@
 #!/bin/sh
 # libre-computer-move -- run by the keyring package's postinst. A board still reading deb.libre.computer
-# (the frozen repo) moves to packages.libre.computer: a source for its release is written, the
-# deb.libre.computer entries are taken out of apt's sources (a file holding only them is set aside, an
-# entry in a file with others is disabled in place, the original kept), and the one-shot rename
-# migration (libre-computer-migrate) is scheduled for when apt is free. A board that cannot move -- a
-# release packages.libre.computer does not serve, a kernel channel other than lc-lts, or
-# packages.libre.computer not answering from here -- keeps its source and is told why. A board already
-# on packages.libre.computer, or whose deb.libre.computer entries are all disabled, is left alone.
+# (the frozen repo) moves to packages.libre.computer: a source for its release is put in place (unless the
+# board already has one), the deb.libre.computer entries are taken out of apt's sources (a file holding
+# nothing else is set aside, an entry in a file with others is disabled in place, the original kept), and
+# the one-shot rename migration (libre-computer-migrate) is scheduled for when apt is free. A board that
+# cannot move -- a release packages.libre.computer does not serve, a kernel channel other than lc-lts, or
+# packages.libre.computer not usable from here (unreachable, or apt rejecting it: signature, the board's
+# clock) -- keeps its source and is told why. A board whose deb.libre.computer entries are all disabled is
+# left alone.
 #
-# LC_PACKAGES_URI overrides the repository URI (tests only; apt checks the signature either way).
+# LC_PACKAGES_URI and LC_PACKAGES_KEY override the repository URI and the key the reachability check
+# verifies it with (tests only: the source written always names the shipped key).
 set -eu
 URI=${LC_PACKAGES_URI:-https://packages.libre.computer/deb}
 KEY=/usr/share/keyrings/libre-computer-deb.gpg
+PROBE_KEY=${LC_PACKAGES_KEY:-$KEY}
 SRC=/etc/apt/sources.list.d/libre-computer.sources
 STATE=/var/lib/libre-computer-archive-keyring
 PKG=${DPKG_MAINTSCRIPT_PACKAGE:-libre-computer-archive-keyring}
 say() { echo "libre-computer-archive-keyring: $*"; }
 
-# one-line (.list) entries: active lines naming the frozen repo, and active lines naming anything else
+# one-line (.list) entries. ours: active lines naming the frozen repo. other: any deb line, active or
+# commented out, naming anything else (a file with one is edited in place, not set aside). new: active
+# lines naming packages.libre.computer
 list_ours() { grep -csE '^[[:space:]]*deb(-src)?[[:space:]].*deb\.libre\.computer' "$1" || true; }
-list_other() { grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -cv 'deb\.libre\.computer' || true; }
-# deb822 (.sources) stanzas, skipping one with Enabled: no. `ours` / `other` count the enabled stanzas
-# naming / not naming the frozen repo; `disable` prints the file with each enabled stanza of ours disabled
+list_other() { grep -sE '^[[:space:]]*(#[[:space:]]*)?deb(-src)?[[:space:]]' "$1" | grep -cv 'deb\.libre\.computer' || true; }
+list_new() { grep -sE '^[[:space:]]*deb(-src)?[[:space:]]' "$1" | grep -cF "$URI" || true; }
+# deb822 (.sources) stanzas. A stanza is disabled by Enabled: no / false / off / 0 (apt's boolean). ours:
+# enabled stanzas naming the frozen repo; other: every other stanza with URIs, disabled ones included;
+# new: enabled stanzas naming packages.libre.computer; disable: the file with each stanza of ours disabled
 sources_awk() { # MODE FILE
-	awk -v mode="$1" '
+	awk -v mode="$1" -v new="$URI" '
 		function flush() {
 			if (n == 0) return
 			mine = (uris ~ /deb\.libre\.computer/) && !off
 			if (mode == "ours" && mine) c++
-			if (mode == "other" && !mine && !off && uris != "") c++
+			if (mode == "other" && !mine && uris != "") c++
+			if (mode == "new" && !off && index(uris, new)) c++
 			if (mode == "disable") {
 				for (i = 1; i <= n; i++) {
 					if (mine && tolower(line[i]) ~ /^enabled:/) continue
@@ -37,7 +45,7 @@ sources_awk() { # MODE FILE
 				if (mine) print "Enabled: no"
 				print ""
 			}
-			n = 0; uris = ""; off = 0
+			n = 0; uris = ""; off = 0; field = ""
 		}
 		/^[[:space:]]*$/ { flush(); next }
 		/^#/ { line[++n] = $0; next }
@@ -48,20 +56,24 @@ sources_awk() { # MODE FILE
 			if (l ~ /^[[:space:]]/) { if (field == "uris") uris = uris " " $0; next }
 			field = l; sub(/:.*/, "", field)
 			if (field == "uris") uris = $0
-			if (l ~ /^enabled:[[:space:]]*no[[:space:]]*$/) off = 1
+			if (l ~ /^enabled:[[:space:]]*(no|false|off|0)[[:space:]]*$/) off = 1
 		}
 		END { flush(); if (mode != "disable") print c + 0 }
 	' "$2"
 }
+count() { # MODE FILE: entries of that kind in one sources file, either format
+	case $2 in
+		*.sources) sources_awk "$1" "$2" ;;
+		*) "list_$1" "$2" ;;
+	esac
+}
 
-# the files with an enabled entry for the frozen repo
-old=""
+# the files with an enabled entry for the frozen repo, and whether the board already reads the new one
+old="" has_new=0
 for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
 	[ -f "$f" ] || continue
-	case $f in
-		*.sources) [ "$(sources_awk ours "$f")" -gt 0 ] || continue ;;
-		*) [ "$(list_ours "$f")" -gt 0 ] || continue ;;
-	esac
+	[ "$(count new "$f")" -eq 0 ] || has_new=1
+	[ "$(count ours "$f")" -gt 0 ] || continue
 	old="$old $f"
 done
 [ -n "$old" ] || exit 0
@@ -88,43 +100,63 @@ if [ -n "$others" ]; then
 	exit 0
 fi
 
-# packages.libre.computer must answer from here (a proxy or an egress allowlist can admit only the old
-# host). apt's own downloader, so apt's proxy settings apply; apt checks the signature at its update
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 chmod 755 "$T"
-if ! /usr/lib/apt/apt-helper download-file "$URI/dists/$suite/InRelease" "$T/InRelease" >"$T/log" 2>&1 ||
-	! head -n 1 "$T/InRelease" 2>/dev/null | grep -q '^-----BEGIN PGP SIGNED MESSAGE-----'; then
-	say "packages.libre.computer ($URI) did not answer from this board; staying on deb.libre.computer. Run 'dpkg-reconfigure $PKG' to try again"
+stanza() { # KEY: the new source's stanza
+	printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: main non-free\nSigned-By: %s\n' "$URI" "$suite" "$1"
+}
+
+# packages.libre.computer must be usable from here before anything changes: apt itself updates the new
+# source alone into scratch lists (apt's proxy settings apply; it checks the signature, and the Release
+# date against the board's clock). A proxy or an egress allowlist can admit only the old host
+mkdir -p "$T/parts" "$T/lists/partial" "$T/cache/archives/partial"
+! id _apt >/dev/null 2>&1 || chown _apt "$T/lists/partial" "$T/cache/archives/partial"
+stanza "$PROBE_KEY" > "$T/parts/probe.sources"
+if ! apt-get -q -o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts="$T/parts" \
+	-o Dir::State::Lists="$T/lists" -o Dir::Cache="$T/cache" update >"$T/probe.log" 2>&1 ||
+	! ls "$T/lists/" 2>/dev/null | grep -q 'InRelease$'; then
+	say "packages.libre.computer ($URI) is not usable from this board; staying on deb.libre.computer. Run 'dpkg-reconfigure $PKG' to try again. apt said:"
+	grep -E '^(E|W|Err):' "$T/probe.log" | sed 's/^/  /' || true
 	exit 0
 fi
 
-# the new source first: a board never lacks one (a full disk stops here, before anything moved)
 mkdir -p "$STATE/moved-sources"
-cat > "$SRC.new" <<EOF
-Types: deb
-URIs: $URI
-Suites: $suite
-Components: main non-free
-Signed-By: $KEY
-EOF
 stamp=$(date +%Y%m%d%H%M%S)
 backup() { # FILE: the path its original is kept at
 	b=$STATE/moved-sources/$(basename "$1")
 	[ ! -e "$b" ] || b=$b.$stamp
 	echo "$b"
 }
-# in place before the old entries go: an interruption from here leaves both sources (apt reads both) and
-# the migration pending
-case " $old " in *" $SRC "*) cp -p "$SRC" "$(backup "$SRC")" ;; esac
-mv "$SRC.new" "$SRC"
+
+# 1. the new source in place first, so the board never lacks one (a full disk stops here, before anything
+# changed). A board that already reads packages.libre.computer keeps its own entry: a second one with a
+# different Signed-By would make apt refuse every source. libre-computer.sources holding entries of its
+# own keeps them: ours in it are disabled and the new stanza added after them
+if [ $has_new = 0 ]; then
+	if [ ! -e "$SRC" ] || { [ "$(count other "$SRC")" -eq 0 ] && [ "$(count ours "$SRC")" -gt 0 ]; }; then
+		stanza "$KEY" > "$T/src"
+	else
+		sources_awk disable "$SRC" > "$T/src"
+		stanza "$KEY" >> "$T/src"
+	fi
+	[ ! -e "$SRC" ] || cp -p "$SRC" "$(backup "$SRC")"
+	cat "$T/src" > "$SRC.new"
+	mv "$SRC.new" "$SRC"
+fi
+
+# 2. the migration pending and its timer enabled, before the old entries go: an interruption from here
+# leaves both sources (apt reads both) and the migration still runs
 touch "$STATE/migrate-pending"
+systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+
+# 3. the deb.libre.computer entries out
 for f in $old; do
-	[ "$f" != "$SRC" ] || continue
+	# libre-computer.sources was rewritten in step 1, unless the board already had the new source
+	[ $has_new = 1 ] || [ "$f" != "$SRC" ] || continue
 	case $f in
-		*.sources) [ "$(sources_awk other "$f")" -eq 0 ] && whole=1 || whole=0 ;;
 		/etc/apt/sources.list) whole=0 ;;
-		*) [ "$(list_other "$f")" -eq 0 ] && whole=1 || whole=0 ;;
+		*) [ "$(count other "$f")" -eq 0 ] && whole=1 || whole=0 ;;
 	esac
 	if [ $whole = 1 ]; then
 		mv "$f" "$(backup "$f")"
@@ -139,9 +171,8 @@ for f in $old; do
 done
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
 
-# the renames need apt, which is busy until this install finishes: a timer runs the one-shot after it
-# and retries until it succeeds; a transient timer starts it 30 s from now
-systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+# 4. the renames need apt, which is busy until this install finishes: the timer retries until they are
+# done, and a transient timer starts them 30 s from now
 if [ -d /run/systemd/system ]; then
 	systemctl start libre-computer-migrate.timer >/dev/null 2>&1 || true
 	systemd-run --quiet --no-block --on-active=30 --unit="libre-computer-migrate-now-$stamp" \

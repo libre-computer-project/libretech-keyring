@@ -76,7 +76,8 @@ safe_apt() {
 		return 1
 	fi
 	bad=""
-	for r in $(awk '$1 == "Remv" {print $2}' "$W/plan"); do
+	# apt plans a removal as Remv, or as Purg where APT::Get::Purge is set
+	for r in $(awk '$1 == "Remv" || $1 == "Purg" {print $2}' "$W/plan"); do
 		case $olds in *" $r "*) ;; *) bad="$bad $r" ;; esac
 	done
 	if [ -n "$bad" ]; then

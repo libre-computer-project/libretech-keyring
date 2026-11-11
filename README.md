@@ -18,9 +18,10 @@ the pacman package cannot (pacman has no `conf.d`), so on install it prints the 
 `bsdtar` and `gpg`.
 
 **Moving a board off deb.libre.computer.** `libre-computer-archive-keyring`'s postinst runs
-`apt/libre-computer-move`: on a board with an enabled apt entry for deb.libre.computer, once
-packages.libre.computer answers from the board, it writes `/etc/apt/sources.list.d/libre-computer.sources` for
-the board's release (Debian 12 / 13, Ubuntu 24.04 / 26.04, Raspbian 12 onto `bookworm`) and then takes the old
+`apt/libre-computer-move`: on a board with an enabled apt entry for deb.libre.computer, once apt
+accepts packages.libre.computer from the board (an `apt-get update` of it alone into scratch lists: reachable,
+signature, the board's clock), it writes `/etc/apt/sources.list.d/libre-computer.sources` for the board's release
+(none if the board already reads packages.libre.computer; entries of its own in that file are kept) (Debian 12 / 13, Ubuntu 24.04 / 26.04, Raspbian 12 onto `bookworm`) and then takes the old
 entries out: a file holding only them goes to `/var/lib/libre-computer-archive-keyring/moved-sources/`, an entry
 in a file with others is disabled in place (the original kept there too). It enables
 `libre-computer-migrate.timer`, which runs `libre-computer-migrate.service` 30 s later, a few minutes after each

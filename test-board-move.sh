@@ -54,7 +54,7 @@ before=$(st libretech-keyring)
 # hold the migration: the package puts the real key back, the staging repos need the throwaway one; its timers
 # (the retry timer and the 30 s one) find the service masked until step 4
 systemctl mask --runtime libre-computer-migrate.service >/dev/null 2>&1
-LC_PACKAGES_URI=$S/packages/deb apt-get "${OURS[@]}" -y -q upgrade > "$D/3-upgrade.log" 2>&1
+LC_PACKAGES_URI=$S/packages/deb LC_PACKAGES_KEY=$D/test-key.gpg apt-get "${OURS[@]}" -y -q upgrade > "$D/3-upgrade.log" 2>&1
 check "3: apt-get upgrade took the self-contained libretech-keyring ($before -> $(st libretech-keyring))" bash -c "dpkg-query -W -f '\${Version}' libretech-keyring | grep -q '~deb.libre.computer\$'"
 check "3: its install moved the board: deb.libre.computer's source set aside, packages.libre.computer's in" bash -c "test ! -e '$LIST' && grep -qx 'URIs: $S/packages/deb' '$SRC' && grep -qx 'Suites: bookworm' '$SRC'"
 check "3: the migration is pending, its retry timer enabled" bash -c "test -e /var/lib/libre-computer-archive-keyring/migrate-pending && systemctl is-enabled libre-computer-migrate.timer"

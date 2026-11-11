@@ -7,7 +7,9 @@ After=network-online.target time-sync.target
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/libre-computer-archive-keyring/libre-computer-migrate
-# waits up to 30 min for each apt or dpkg lock; a failure leaves the pending mark and the timer retries
-TimeoutStartSec=2h
+# it waits up to 30 min for each apt or dpkg lock, steps that add up past any fixed limit, and a stop on a
+# timeout would kill dpkg mid-install; nothing waits on this unit (the timer starts it). A failure leaves
+# the pending mark and the timer retries
+TimeoutStartSec=infinity
 Nice=10
 # no [Install]: libre-computer-migrate.timer starts it, so no boot target waits on apt

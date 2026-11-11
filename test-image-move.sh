@@ -151,7 +151,8 @@ cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 in_root apt-get -q update > "$W/2-update.log" 2>&1
 check "2: apt reads the stand-in deb.libre.computer, signature checked" bash -c "! grep -qE '^(E|W): ' '$W/2-update.log'"
 before=$(ver libretech-keyring)
-in_root env LC_PACKAGES_URI=file:///srv/test-repo DEBIAN_FRONTEND=noninteractive apt-get -y -q upgrade > "$W/3-upgrade.log" 2>&1
+cp "$W/test-key.gpg" "$P/test-key.gpg"   # /srv/test-repo in the chroot
+in_root env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo/test-key.gpg DEBIAN_FRONTEND=noninteractive apt-get -y -q upgrade > "$W/3-upgrade.log" 2>&1
 check "3: apt-get upgrade takes the self-contained libretech-keyring ($before -> $(ver libretech-keyring))" bash -c "[[ '$(ver libretech-keyring)' == *~deb.libre.computer ]]"
 grep -h 'libre-computer-archive-keyring:' "$W/3-upgrade.log" | sed 's/^/   /'
 src=$mnt/etc/apt/sources.list.d/libre-computer.sources

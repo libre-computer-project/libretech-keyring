@@ -70,6 +70,8 @@ standin alsa-ucm-conf-libre-computer libretech-alsa-ucm-conf
 standin xserver-xorg-core-libre-computer xserver-xorg-video-libretech
 standin linux-image-lc-lts-armhf linux-image-lc-lts-arm
 cp "$new_keyring" "$trans_keyring" "$R/pool/"
+# the key libre-computer-move verifies the repository with (LC_PACKAGES_KEY), inside the chroot at /srv/test-repo
+cp "$W/test-key.gpg" "$R/test-key.gpg"
 for s in trixie; do
 	mkdir -p "$R/dists/$s/main/binary-arm64" "$R/dists/$s/main/binary-all" "$R/dists/$s/non-free/binary-arm64"
 	(cd "$R" && apt-ftparchive packages pool > "dists/$s/main/binary-arm64/Packages")
@@ -105,7 +107,7 @@ in_root() { chroot "$mnt" "$@"; }
 installed() { [[ "$(chroot "$mnt" dpkg-query -W -f '${db:Status-Status}' "$1" 2>/dev/null)" == installed ]]; }
 install_keyring() { # the two keyring packages, through apt as a board takes them (plain dpkg -i cannot
 	# order the swap: it refuses to unpack the new keyring while the old one is configured)
-	chroot "$mnt" env LC_PACKAGES_URI="${LCURI:-file:///srv/test-repo}" DEBIAN_FRONTEND=noninteractive \
+	chroot "$mnt" env LC_PACKAGES_URI="${LCURI:-file:///srv/test-repo}" LC_PACKAGES_KEY="${LCKEY-/srv/test-repo/test-key.gpg}" DEBIAN_FRONTEND=noninteractive \
 		apt-get -y -q install "/tmp/${new_keyring##*/}" "/tmp/${trans_keyring##*/}" > "$W/dpkg.log" 2>&1 ||
 		{ echo "-- installing the keyring failed:"; tail -n 15 "$W/dpkg.log"; }
 }
@@ -194,7 +196,7 @@ setup_deblibre() {
 	chroot "$mnt" apt-get -q update > "$W/update.log" 2>&1
 }
 upgrade() { # a plain `apt-get upgrade`, as an owner runs it
-	chroot "$mnt" env LC_PACKAGES_URI=file:///srv/test-repo DEBIAN_FRONTEND=noninteractive \
+	chroot "$mnt" env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo/test-key.gpg DEBIAN_FRONTEND=noninteractive \
 		apt-get -y -q upgrade > "$W/upgrade.log" 2>&1
 }
 ver() { chroot "$mnt" dpkg-query -W -f '${Version}' "$1" 2>/dev/null; }
@@ -243,9 +245,9 @@ dummy() { # NAME [CONTROL-LINE]: a local package built into the chroot's /tmp
 echo "== S7: deb.libre.computer in a .list file that also names another repository"
 setup
 mv "$mnt/etc/apt/sources.list.d/libre-computer-deb.list" "$mnt/etc/apt/sources.list.d/mixed.list"
-echo 'deb file:///srv/test-repo trixie main' >> "$mnt/etc/apt/sources.list.d/mixed.list"
+echo 'deb file:///srv/other trixie main' >> "$mnt/etc/apt/sources.list.d/mixed.list"
 install_keyring
-check "S7: the file stays, the other line active, ours commented out" bash -c "grep -qx 'deb file:///srv/test-repo trixie main' '$mnt/etc/apt/sources.list.d/mixed.list' && grep -q '^# moved to packages.libre.computer: deb .*deb.libre.computer' '$mnt/etc/apt/sources.list.d/mixed.list'"
+check "S7: the file stays, the other line active, ours commented out" bash -c "grep -qx 'deb file:///srv/other trixie main' '$mnt/etc/apt/sources.list.d/mixed.list' && grep -q '^# moved to packages.libre.computer: deb .*deb.libre.computer' '$mnt/etc/apt/sources.list.d/mixed.list'"
 check "S7: the original is kept" grep -q '^deb .*deb.libre.computer' "$mnt$S/moved-sources/mixed.list"
 check "S7: the new source is in" test -s "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 cleanup
@@ -254,9 +256,9 @@ echo "== S8: deb822: a stanza of ours beside another in one file; a disabled one
 setup
 rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
 # ours names its URI on a continuation line, as deb822 allows
-printf '# a comment\nTypes: deb\nURIs: file:///srv/unused\n https://deb.libre.computer/repo\nSuites: linux\nComponents: main\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n\nTypes: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/mixed.sources"
+printf '# a comment\nTypes: deb\nURIs: file:///srv/unused\n https://deb.libre.computer/repo\nSuites: linux\nComponents: main\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n\nTypes: deb\nURIs: file:///srv/other\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/mixed.sources"
 install_keyring
-check "S8: our stanza is disabled in place, the other stanza untouched" bash -c "awk 'BEGIN{RS=\"\"} /deb\\.libre\\.computer/ && /Enabled: no/ {a=1} /srv\\/test-repo/ && !/Enabled:/ {b=1} END{exit !(a&&b)}' '$mnt/etc/apt/sources.list.d/mixed.sources'"
+check "S8: our stanza is disabled in place, the other stanza untouched" bash -c "awk 'BEGIN{RS=\"\"} /deb\\.libre\\.computer/ && /Enabled: no/ {a=1} /srv\\/other/ && !/Enabled:/ {b=1} END{exit !(a&&b)}' '$mnt/etc/apt/sources.list.d/mixed.sources'"
 check "S8: apt reads the edited file" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts=/etc/apt/sources.list.d indextargets
 check "S8: the board moved" test -e "$mnt$S/migrate-pending"
 cleanup
@@ -272,12 +274,19 @@ echo "== S9: packages.libre.computer does not answer from the board"
 setup
 LCURI=file:///srv/nowhere install_keyring
 check "S9: the keyring still installs" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring"
-check "S9: stays on deb.libre.computer, and says how to retry" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -q 'did not answer' '$W/dpkg.log' && grep -q dpkg-reconfigure '$W/dpkg.log'"
+check "S9: stays on deb.libre.computer, and says how to retry" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -q 'is not usable' '$W/dpkg.log' && grep -q dpkg-reconfigure '$W/dpkg.log'"
 check "S9: nothing pending" test ! -e "$mnt$S/migrate-pending"
 cleanup
 
-echo "== S10: the migration removes nothing but old names"
+echo "== S9b: packages.libre.computer answers, but apt rejects its signature (another key)"
 setup
+LCKEY= install_keyring
+check "S9b: stays on deb.libre.computer, nothing pending" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt$S/migrate-pending' && grep -q 'is not usable' '$W/dpkg.log'"
+cleanup
+
+echo "== S10: the migration removes nothing but old names (apt set to purge, too)"
+setup
+echo 'APT::Get::Purge "true";' > "$mnt/etc/apt/apt.conf.d/99purge"
 dummy user-app 'Depends: libretech-gpio (<< 2026.11.10)'
 in_root dpkg -i /tmp/user-app.deb >/dev/null 2>&1
 install_keyring
@@ -333,6 +342,45 @@ sed -i 's|^URIs: .*|URIs: file:///srv/nowhere|' "$mnt/etc/apt/sources.list.d/lib
 migrate s13.log
 check "S13: it says why and leaves the migration pending" bash -c "grep -q 'package lists are not here' '$W/s13.log' && test -e '$mnt$S/migrate-pending'"
 check "S13: the old names still installed" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-gpio"
+cleanup
+
+echo "== S14: a board that already reads packages.libre.computer elsewhere, under another key path"
+setup
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+echo 'deb [signed-by=/usr/share/keyrings/own-copy.gpg] file:///srv/test-repo trixie main' > "$mnt/etc/apt/sources.list.d/mine.list"
+install_keyring
+check "S14: no second source written, the owner's entry kept, deb.libre.computer's set aside" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -s '$mnt/etc/apt/sources.list.d/mine.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/migrate-pending'"
+check "S14: apt reads the sources (no conflicting Signed-By)" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null indextargets
+migrate s14.log
+check "S14: the migration succeeds" grep -q 'done: the board reads' "$W/s14.log"
+cleanup
+
+echo "== S15: libre-computer.sources itself names deb.libre.computer beside another stanza"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo\nSuites: linux\nComponents: main\n\nTypes: deb\nURIs: file:///srv/other\nSuites: trixie\nComponents: main\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+install_keyring
+f=$mnt/etc/apt/sources.list.d/libre-computer.sources
+check "S15: the other stanza kept, ours disabled, the new one added" bash -c "awk 'BEGIN{RS=\"\"} /deb\\.libre\\.computer/ && /Enabled: no/ {a=1} /srv\\/other/ && !/Enabled:/ {b=1} /srv\\/test-repo/ && /Signed-By: \\/usr\\/share\\/keyrings\\/libre-computer-deb.gpg/ {c=1} END{exit !(a&&b&&c)}' '$f'"
+check "S15: the original kept" grep -q 'deb.libre.computer' "$mnt$S/moved-sources/libre-computer.sources"
+check "S15: apt reads it" in_root apt-get -q -o Dir::Etc::sourcelist=/dev/null indextargets
+cleanup
+
+echo "== S16: a deb822 stanza disabled as Enabled: false (apt's boolean)"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo\nSuites: linux\nComponents: main\nEnabled: false\n' > "$mnt/etc/apt/sources.list.d/off.sources"
+install_keyring
+check "S16: nothing moves, nothing pending" bash -c "test -s '$mnt/etc/apt/sources.list.d/off.sources' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt$S/migrate-pending'"
+cleanup
+
+echo "== S17: ours beside a disabled third-party stanza: the file stays, the disabled stanza with it"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+printf 'Types: deb\nURIs: https://deb.libre.computer/repo\nSuites: linux\nComponents: main\n\nTypes: deb\nURIs: file:///srv/other\nSuites: trixie\nComponents: main\nEnabled: no\n' > "$mnt/etc/apt/sources.list.d/two.sources"
+install_keyring
+check "S17: the file stays in place, the third-party stanza in it, ours disabled" bash -c "grep -q 'srv/other' '$mnt/etc/apt/sources.list.d/two.sources' && awk 'BEGIN{RS=\"\"} /deb\\.libre\\.computer/ && /Enabled: no/ {a=1} END{exit !a}' '$mnt/etc/apt/sources.list.d/two.sources'"
+check "S17: the board moved" test -s "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"
