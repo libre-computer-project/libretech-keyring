@@ -51,18 +51,30 @@ pr() { dpkg-query -W -f '${db:Status-Status}\n' "$1" 2>/dev/null | grep -qvxE 'n
 # once libre-computer-archive-keyring is in (the renames then remove it). A run may also take out a part-done
 # package it removes (whole REMOVED): a removal configures nothing -- an old name a power loss left half-way out
 # of the board, which dpkg --configure -a cannot finish and no repository still has to reinstall
-except() { [ "$(st libre-computer-archive-keyring)" != installed ] || echo libretech-keyring; }
+# (exactly that one: a libretech-keyring in the range libre-computer-archive-keyring Breaks, which dpkg could
+# never configure beside it; the owner's transitional libretech-keyring of the same version is not excepted)
+except() {
+	[ "$(st libre-computer-archive-keyring)" = installed ] || return 0
+	ov=$(dpkg-query -W -f '${Version}' libretech-keyring 2>/dev/null) || return 0
+	nv=$(dpkg-query -W -f '${Version}' libre-computer-archive-keyring 2>/dev/null) || return 0
+	[ -z "$ov" ] || ! dpkg --compare-versions "$ov" lt "$nv" || echo libretech-keyring
+}
 # partdone [EXTRA...]: " NAME..." of the packages dpkg holds part-done (unpacked, half-installed,
 # half-configured), less the exception and EXTRA. A package only awaiting triggers (triggers-pending, -awaited) is
-# not part-done: dpkg processes its triggers in any configure run, as apt's closing one, and nothing is decided
+# not part-done: dpkg processes its triggers in any configure run, as apt's closing one, and nothing is decided.
+# dpkg's database unreadable: " (dpkg-query failed)", so the check fails closed
 partdone() {
-	dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' 2>/dev/null |
-		awk -v ex=" $(except) $* " '
-			$1 != "unpacked" && $1 != "half-installed" && $1 != "half-configured" { next }
-			{ n = $2; sub(/:.*/, "", n); if (index(ex, " " n " ") == 0) printf " %s", $2 }'
+	if ! dq=$(dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' 2>/dev/null); then
+		echo " (dpkg-query failed)"
+		return 0
+	fi
+	printf '%s\n' "$dq" | awk -v ex=" $(except) $* " '
+		$1 != "unpacked" && $1 != "half-installed" && $1 != "half-configured" { next }
+		{ n = $2; sub(/:.*/, "", n); if (index(ex, " " n " ") == 0) printf " %s", $2 }'
 }
-# dirty: dpkg's journal holds entries (a dpkg run was cut short; apt refuses to run until dpkg --configure -a)
-dirty() { [ -n "$(ls -A /var/lib/dpkg/updates 2>/dev/null)" ]; }
+# dirty: dpkg's journal holds entries (a dpkg run was cut short; apt refuses to run until dpkg --configure -a).
+# Its entries are the all-digit files in updates/, as apt and dpkg read them (a stray tmp.i is not one)
+dirty() { ls /var/lib/dpkg/updates 2>/dev/null | grep -qxE '[0-9]+'; }
 # whole [REMOVED...]: say what holds the renames back, if anything (then false)
 whole() {
 	if dirty; then
@@ -121,19 +133,25 @@ run_begin() {
 	echo "${bid:--} $$ ${bst:--}" > "$STATE/renaming"
 }
 run_end() { rm -f "$STATE/renaming"; }
-# record_pending NEW...: each new name's mark-to-be (its old name's), recorded just before the run that installs
-# it, which also marks the rename as begun: keep_mark sets the mark, or the next run does if this one stops in
-# between; the next run also installs a new name whose rename a stop cut short after apt had taken the old name
-# (a record whose old name is gone is left as it is). On disk before the run starts (sync): dpkg makes what it
-# does durable at once, and a record lost to a power loss would leave the old name gone and the new never in.
-# Its own names (qp/qo/qn): sh has no local variables
+# pending-NEW: a rename begun -- NEW's mark-to-be (its old name's). keep_mark sets the mark, or the next run does
+# if this one stops in between; the next run also installs a new name whose rename a stop cut short after the old
+# name had gone (a record whose old name is gone is left as it is). It is written at the last moment before the
+# old name can go, and synced (dpkg makes what it does durable at once): in an apt run by the guard, after the
+# downloads, for the renames whose old name that run removes (pending_spec gives it the marks); before
+# keyring_swap's dpkg run by record_pending. Their own names (qp/qo/qn): sh has no local variables
 pend=""
-record_pending() {
+# pending_spec NEW...: "OLD NEW MARK" lines for the guard (LC_RENAME_PENDING)
+pending_spec() {
 	for qp in $pairs; do
 		qo=${qp%%:*} qn=${qp#*:}
 		case " $* " in *" $qn "*) ;; *) continue ;; esac
 		pr "$qo" || continue
-		case $autos in *" $qo "*) echo auto ;; *) echo manual ;; esac > "$STATE/pending-$qn"
+		case $autos in *" $qo "*) echo "$qo $qn auto" ;; *) echo "$qo $qn manual" ;; esac
+	done
+}
+record_pending() {
+	pending_spec "$@" | while read -r qo qn qm; do
+		echo "$qm" > "$STATE/pending-$qn"
 		sync "$STATE/pending-$qn" "$STATE" 2>/dev/null || sync
 	done
 }
@@ -166,12 +184,14 @@ safe_apt() {
 		# (the guard checks this again inside apt's run, its locks held)
 		# shellcheck disable=SC2046
 		whole $(awk '$1 == "Remv" || $1 == "Purg" {n = $2; sub(/:.*/, "", n); print n}' "$W/plan") || return 1
-		[ -z "$pend" ] || record_pending $pend
+		# shellcheck disable=SC2086
+		spec=$([ -z "$pend" ] || pending_spec $pend)
 		run_begin
 		# shellcheck disable=SC2086
 		# the same guards inside apt's run (its plan then final, its locks held): another apt may have changed
-		# the board since the plan above
-		if LC_RENAME_ALLOW="$allow" LC_RENAME_EXCEPT="$(except)" $APT -o "DPkg::Pre-Install-Pkgs::=$GUARD" \
+		# the board since the plan above; and the guard records the renames the run begins (pending-NEW)
+		if LC_RENAME_ALLOW="$allow" LC_RENAME_EXCEPT="$(except)" LC_RENAME_PENDING="$spec" LC_RENAME_STATE="$STATE" \
+			$APT -o "DPkg::Pre-Install-Pkgs::=$GUARD" \
 			-o "DPkg::Tools::Options::$GUARD::Version=2" "$@" >"$W/out" 2>&1; then
 			run_end
 			cat "$W/out"
@@ -193,7 +213,8 @@ safe_apt() {
 # autoremove would take it -- the kernel meta-package, or the keyring whose key every Libre Computer source line
 # names. A new name the owner already had as manual stays manual: only manual is ever copied onto it
 snapshot() {
-	had=" $(for p in $pairs $kpairs; do o=${p%%:*}; [ "$(st "$o")" != installed ] || printf '%s ' "$o"; done)"
+	# (an old name in any state but removed: one left unpacked still has the mark its new name is to take)
+	had=" $(for p in $pairs $kpairs; do o=${p%%:*}; ! pr "$o" || printf '%s ' "$o"; done)"
 	newmanual=" $(for p in $pairs $kpairs; do n=${p#*:}; [ "$(st "$n")" != installed ] || printf '%s ' "$n"; done)"
 	autos=" $(apt-mark showauto 2>/dev/null | tr '\n' ' ') "
 	for n in $newmanual; do case $autos in *" $n "*) newmanual=$(echo "$newmanual" | sed "s/ $n / /") ;; esac; done
@@ -434,9 +455,11 @@ waiting="" kgone=""
 # only on a board that moved: on the frozen repo the new kernel names never come, and waiting for them would
 # keep the timer running for good
 [ -e "$STATE/moved" ] || kpairs=""
+# (an old name in any state but removed: one the owner's upgrade left unpacked, a failing kernel postinst, still
+# waits for its removal; the removal configures nothing)
 for p in $kpairs; do
 	o=${p%%:*} n=${p#*:}
-	[ "$(st "$o")" = installed ] || continue
+	pr "$o" || continue
 	if [ "$(st "$n")" = installed ]; then kgone="$kgone $o"; else waiting="$waiting $o"; fi
 done
 if [ -n "$kgone" ]; then
@@ -454,7 +477,7 @@ if [ -n "$kgone" ]; then
 	# error) is tried again
 	for p in $kpairs; do
 		o=${p%%:*} n=${p#*:}
-		[ "$(st "$o")" != installed ] || [ "$(st "$n")" != installed ] || waiting="$waiting $o"
+		! pr "$o" || [ "$(st "$n")" != installed ] || waiting="$waiting $o"
 	done
 fi
 if [ -n "$waiting" ]; then

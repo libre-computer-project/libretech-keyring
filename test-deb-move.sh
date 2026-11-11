@@ -949,5 +949,31 @@ migrate s64c.log
 check "S64: then libre-computer-gpio in, libretech-gpio gone (the rename's run removing it), done" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-gpio && ! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-gpio 2>/dev/null | grep -qvx 'not-installed\|config-files' && grep -q 'done: the board reads' '$W/s64c.log'"
 cleanup
 
+echo "== S66: the owner's transitional libretech-keyring left part-done is not the swap's: the renames wait"
+setup
+install_keyring
+# the transitional unpacked again, never configured (as a cut-short run of the owner's leaves it)
+in_root dpkg --unpack "/tmp/${trans_keyring##*/}" > "$W/s66a.log" 2>&1
+check "S66: the precondition: libretech-keyring unpacked beside libre-computer-archive-keyring" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring | grep -qx unpacked"
+migrate s66.log
+check "S66: left unpacked, the renames waiting, saying why" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring | grep -qx unpacked && grep -q 'part-done: *libretech-keyring' '$W/s66.log'"
+cleanup
+
+echo "== S67: the old kernel meta-package left unpacked (its postinst failed) beside the new one still goes"
+setup
+dummy linux-image-lc-lts-arm
+in_root dpkg -i /tmp/linux-image-lc-lts-arm.deb >/dev/null 2>&1
+dummy linux-image-lc-lts-armhf
+in_root dpkg -i /tmp/linux-image-lc-lts-armhf.deb >/dev/null 2>&1
+install_keyring
+# as the owner's upgrade leaves them: the old meta manual, the new one pulled in automatic
+in_root apt-mark manual linux-image-lc-lts-arm >/dev/null 2>&1
+in_root apt-mark auto linux-image-lc-lts-armhf >/dev/null 2>&1
+in_root dpkg --unpack /tmp/linux-image-lc-lts-arm.deb > "$W/s67a.log" 2>&1
+check "S67: the precondition: linux-image-lc-lts-arm unpacked" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' linux-image-lc-lts-arm | grep -qx unpacked"
+migrate s67.log
+check "S67: the old meta gone, the new one in and manual (as the old one was), nothing pending for the kernel" bash -c "$(declare -f installed); mnt='$mnt'; ! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' linux-image-lc-lts-arm 2>/dev/null | grep -qvx 'not-installed\|config-files' && installed linux-image-lc-lts-armhf && chroot '$mnt' apt-mark showmanual | grep -qx linux-image-lc-lts-armhf && test ! -e '$mnt$S/kernel-pending'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

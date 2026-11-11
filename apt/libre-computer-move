@@ -263,6 +263,8 @@ undo_src() { # KIND BACKUP PATH: the previous libre-computer.sources back (file:
 	file)
 		newtmp "$3"
 		cp -p "$2" "$tmp"
+		# (on disk before the rename over the file apt cannot read)
+		sync "$tmp" 2>/dev/null || sync
 		mv -T "$tmp" "$3"
 		tmp="" ;;
 	link)
@@ -533,18 +535,18 @@ for f in $old; do
 	if [ $whole = 1 ]; then
 		# a symlink: the backup holds the content it named (a relative link would dangle there), and the
 		# link goes; the file it named stays where it is
+		# (the copy on disk before the original goes: /var and /etc may be different filesystems, where mv is
+		# a copy and an unlink)
 		b=$(backup "$f")
-		if [ -L "$f" ]; then
-			cp -pL "$f" "$b"
-			rm -f "$f"
-		else
-			mv "$f" "$b"
-		fi
+		cp -pL "$f" "$b"
+		sync "$b" "${b%/*}" 2>/dev/null || sync
+		rm -f "$f"
 		continue
 	fi
 	# a file with other entries too: the original kept, ours disabled in place -- in the file itself, or in
 	# the file a symlink names (the link stays a link), through a copy renamed over it
-	cp -p "$f" "$(backup "$f")"
+	b=$(backup "$f")
+	cp -p "$f" "$b"
 	real=$(readlink -f "$f")
 	case $f in
 		*.sources) sources_awk disable "$f" > "$T/edited" ;;
@@ -554,8 +556,12 @@ for f in $old; do
 	cat "$T/edited" > "$tmp"
 	chmod --reference="$real" "$tmp"
 	chown --reference="$real" "$tmp"
+	# the copy and the edited file on disk before the rename over the original (a filesystem that does not
+	# flush a file renamed over another could otherwise leave it empty)
+	sync "$b" "${b%/*}" "$tmp" 2>/dev/null || sync
 	mv -T "$tmp" "$real"
 	tmp=""
+	sync "${real%/*}" 2>/dev/null || sync
 done
 retry_off
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"

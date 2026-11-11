@@ -2,12 +2,19 @@
 # libre-computer-rename-guard -- apt's DPkg::Pre-Install-Pkgs hook on libre-computer-migrate's apt runs (never
 # installed as a configuration: the migration passes it with -o on its own runs alone).
 #
-# apt runs it after its final plan, holding its locks, before it calls dpkg; a failure stops the run with
-# nothing changed. It refuses a run that would remove any package not in LC_RENAME_ALLOW (space-separated
-# names), or that would finish (apt's closing configure) a package dpkg holds part-done: the migration checks
-# both before the run, but another apt can change the board between that check and the run. apt hands it the actions on stdin (protocol version 2: a "VERSION 2" line, the
-# configuration, a blank line, then one line per package whose last field is **REMOVE** for a removal). Any
-# other input, a version 1 list of .deb files with no removals in it included, is refused too.
+# apt runs it after its final plan and the downloads, holding its locks, before it calls dpkg; a failure stops
+# the run with nothing changed. It refuses a run that would remove any package not in LC_RENAME_ALLOW
+# (space-separated names), or that would finish (apt's closing configure) a package dpkg holds part-done: the
+# migration checks both before the run, but another apt can change the board between that check and the run.
+# apt hands it the actions on stdin (protocol version 2: a "VERSION 2" line, the configuration, a blank line,
+# then one line per package whose last field is **REMOVE** for a removal). Any other input, a version 1 list of
+# .deb files with no removals in it included, is refused too.
+#
+# A run it lets through that removes an old name begins that rename: for each "OLD NEW MARK" line of
+# LC_RENAME_PENDING whose OLD this run removes, it writes NEW's mark-to-be to LC_RENAME_STATE/pending-NEW, on
+# disk before dpkg runs. The migration's next run resumes a rename whose record is there, its old name gone and
+# its new one not in (a power loss between apt's removal of OLD and its install of NEW); a power loss before
+# this point (a download) leaves no record, so a name the owner removes meanwhile is not installed again.
 set -eu
 IFS= read -r v || v=""
 if [ "$v" != "VERSION 2" ]; then
@@ -30,13 +37,26 @@ fi
 # and dpkg whole: no package part-done (unpacked, half-installed, half-configured; one only awaiting triggers is
 # not: dpkg processes triggers in any configure run, deciding nothing), which apt's closing dpkg --configure
 # --pending would finish, but the ones this run removes (a removal configures nothing) and those in
-# LC_RENAME_EXCEPT (space-separated: the keyring the migration's own swap deconfigures)
-pd=$(dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' 2>/dev/null |
-	awk -v ex="$removed${LC_RENAME_EXCEPT:-} " '
-		$1 != "unpacked" && $1 != "half-installed" && $1 != "half-configured" { next }
-		{ n = $2; sub(/:.*/, "", n); if (index(ex, " " n " ") == 0) printf " %s", $2 }')
+# LC_RENAME_EXCEPT (space-separated: the keyring the migration's own swap deconfigures). dpkg's database
+# unreadable: refused
+if ! dq=$(dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' 2>/dev/null); then
+	echo "libre-computer-rename-guard: dpkg-query failed; refusing (nothing changed)" >&2
+	exit 1
+fi
+pd=$(printf '%s\n' "$dq" | awk -v ex="$removed${LC_RENAME_EXCEPT:-} " '
+	$1 != "unpacked" && $1 != "half-installed" && $1 != "half-configured" { next }
+	{ n = $2; sub(/:.*/, "", n); if (index(ex, " " n " ") == 0) printf " %s", $2 }')
 if [ -n "$pd" ]; then
 	echo "libre-computer-rename-guard: dpkg holds packages part-done:$pd; refusing (nothing changed)" >&2
 	exit 1
+fi
+# the renames this run begins
+if [ -n "${LC_RENAME_PENDING:-}" ] && [ -n "${LC_RENAME_STATE:-}" ]; then
+	printf '%s\n' "$LC_RENAME_PENDING" | while read -r po pn pm; do
+		[ -n "$pm" ] || continue
+		case $removed in *" $po "*) ;; *) continue ;; esac
+		echo "$pm" > "$LC_RENAME_STATE/pending-$pn"
+		sync "$LC_RENAME_STATE/pending-$pn" "$LC_RENAME_STATE" 2>/dev/null || sync
+	done
 fi
 exit 0
