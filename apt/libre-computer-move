@@ -134,6 +134,8 @@ sources_awk() { # MODE FILE
 		function isnew(u) { return norm(u) == new || proxied(u) == new }
 		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd, hn) {
 			if (n == 0) return
+			# Enabled: the whole field, continuation lines included; false as apt reads it
+			if (ev != "") { gsub(/[[:space:]]+/, "", ev); off = (ev ~ /^(no|false|without|off|disable|[+-]?(0[xX])?0+)$/) }
 			v = uris; sub(/^[^:]*:/, "", v)
 			ntok = split(v, t, /[[:space:]]+/); keep = ""; libre = 0; oth = 0
 			for (k = 1; k <= ntok; k++) {
@@ -158,15 +160,15 @@ sources_awk() { # MODE FILE
 			if (mode == "disable") {
 				for (k = 1; k <= n; k++) {
 					if (mine && oth && isuri[k]) continue
-					if (mine && !oth && tolower(line[k]) ~ /^enabled[[:space:]]*:/) continue
+					if (mine && !oth && isen[k]) continue
 					print line[k]
 				}
 				if (mine && oth) print "URIs:" keep
 				if (mine && !oth) print "Enabled: no"
 				print ""
 			}
-			n = 0; uris = ""; suites = ""; types = ""; off = 0; field = ""; cent = 0
-			split("", isuri)
+			n = 0; uris = ""; suites = ""; types = ""; off = 0; field = ""; cent = 0; ev = ""
+			split("", isuri); split("", isen)
 		}
 		{ sub(/\r$/, "") }
 		/^$/ { flush(); next }
@@ -183,13 +185,14 @@ sources_awk() { # MODE FILE
 				if (field == "uris") { uris = uris " " $0; isuri[n] = 1 }
 				if (field == "suites") suites = suites " " $0
 				if (field == "types") types = types " " $0
+				if (field == "enabled") { ev = ev " " l; isen[n] = 1 }
 				next
 			}
 			field = l; sub(/[[:space:]]*:.*/, "", field)
 			if (field == "uris") { uris = $0; isuri[n] = 1 }
 			if (field == "suites") { suites = $0; sub(/^[^:]*:/, "", suites) }
 			if (field == "types") { types = $0; sub(/^[^:]*:/, "", types) }
-			if (field == "enabled") off = (l ~ /^enabled[[:space:]]*:[[:space:]]*(no|false|without|off|disable|[+-]?(0[xX])?0+)[[:space:]]*$/)
+			if (field == "enabled") { ev = l; sub(/^[^:]*:/, "", ev); if (ev == "") ev = " "; isen[n] = 1 }
 		}
 		END { flush(); if (mode != "disable" && mode != "pick") print c + 0 }
 	' "$2"
@@ -261,7 +264,7 @@ trap 'rm -rf "$T"; [ -z "$tmp" ] || rm -f "$tmp"' EXIT
 # the scratch probes run none of apt's update hooks (appstream, packagekit, command-not-found): they would
 # refresh the system's caches from inside the postinst
 printf '#clear APT::Update::Pre-Invoke;\n#clear APT::Update::Post-Invoke;\n#clear APT::Update::Post-Invoke-Success;\n#clear APT::Update::Post-Invoke-Stats;\n#clear APT::Update::Auth-Failure;\n' > "$T/nohooks.conf"
-trap 'exit 1' INT TERM
+trap 'exit 1' INT TERM HUP
 chmod 755 "$T"
 stanza() { # KEY: the new source's stanza
 	printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: main non-free\nSigned-By: %s\n' "$URI" "$suite" "$1"

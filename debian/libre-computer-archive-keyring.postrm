@@ -25,10 +25,11 @@ case "$1" in
 			{ [ ! -e /usr/lib/systemd/system/libre-computer-migrate.timer ] && [ ! -e "$S/migrate-pending" ] &&
 				[ ! -e "$S/kernel-pending" ]; }; then
 			rm -f /etc/systemd/system/timers.target.wants/libre-computer-migrate.timer
-		fi
-		if [ "${DPKG_MAINTSCRIPT_PACKAGE:-}" = libre-computer-archive-keyring ] && [ -d /run/systemd/system ]; then
-			systemctl stop --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
-			systemctl daemon-reload >/dev/null 2>&1 || true
+			# and the loaded timer stopped, so it does not keep starting a script that is gone
+			if [ -d /run/systemd/system ]; then
+				systemctl stop --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+				systemctl daemon-reload >/dev/null 2>&1 || true
+			fi
 		fi
 		;;
 esac

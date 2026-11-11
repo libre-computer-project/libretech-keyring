@@ -66,9 +66,16 @@ wait_lock() {
 # safe_apt ARGS: apt-get ARGS, only if its plan removes nothing but the names in $allow (set by the caller). The plan is read
 # again before every attempt: while a lock is held, another apt may change what this one would do
 safe_apt() {
-	i=0
+	i=0 replanned=0
 	while :; do
 		if ! $APT -s "$@" >"$W/plan" 2>&1; then
+			# another apt may have started since dpkg was free and left packages unpacked: wait for it, configure
+			# what it left, then plan once more
+			if [ $replanned = 0 ]; then
+				replanned=1
+				wait_lock dpkg --configure -a --force-confold --force-confdef || true
+				continue
+			fi
 			say "apt cannot plan 'apt-get $*'; will retry:"
 			sed 's/^/  /' "$W/plan" | tail -n 15
 			return 1
