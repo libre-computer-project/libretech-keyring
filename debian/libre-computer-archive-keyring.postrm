@@ -3,14 +3,15 @@ set -e
 case "$1" in
 	purge)
 		# the move's state (the pending marks, the old source files kept), unless the keyring's other name is
-		# installed or a migration is under way: purging libretech-keyring during the rename (apt may purge it
+		# installed or a migration is under way (migrate-pending / kernel-pending: a move only retried, on a board
+		# that never moved, is not work the other name takes over -- the rename happens only after a move): purging libretech-keyring during the rename (apt may purge it
 		# before it unpacks libre-computer-archive-keyring), or later from its config-files state, must not
 		# stop the migration or lose the originals
 		S=/var/lib/libre-computer-archive-keyring
 		# libre-computer-archive-keyring itself purged: nothing will ever take the work over
 		if [ "${DPKG_MAINTSCRIPT_PACKAGE:-}" = libre-computer-archive-keyring ] ||
 			{ [ ! -e /usr/lib/libre-computer-archive-keyring/libre-computer-migrate ] && [ ! -e "$S/migrate-pending" ] &&
-				[ ! -e "$S/kernel-pending" ] && [ ! -e "$S/move-pending" ]; }; then
+				[ ! -e "$S/kernel-pending" ]; }; then
 			rm -rf "$S"
 		fi
 		;;
@@ -22,7 +23,7 @@ case "$1" in
 		# libre-computer-archive-keyring itself removed (not the rename's old name): its link goes
 		if [ "${DPKG_MAINTSCRIPT_PACKAGE:-}" = libre-computer-archive-keyring ] ||
 			{ [ ! -e /usr/lib/systemd/system/libre-computer-migrate.timer ] && [ ! -e "$S/migrate-pending" ] &&
-				[ ! -e "$S/kernel-pending" ] && [ ! -e "$S/move-pending" ]; }; then
+				[ ! -e "$S/kernel-pending" ]; }; then
 			rm -f /etc/systemd/system/timers.target.wants/libre-computer-migrate.timer
 		fi
 		;;

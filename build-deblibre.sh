@@ -57,9 +57,14 @@ if [[ -z $above ]]; then
 		rel=$(curl -fsSL "https://deb.libre.computer/repo/dists/$s/Release") ||
 			{ echo "could not read deb.libre.computer $s's Release; pass --above" >&2; exit 1; }
 		grep -qE "^Architectures:.* $a( |$)" <<<"$rel" || continue
-		v=$(curl -fsSL "https://deb.libre.computer/repo/dists/$s/main/binary-$a/Packages.gz" | gzip -dc |
-			awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}') ||
-			{ echo "could not read deb.libre.computer $s $a; pass --above" >&2; exit 1; }
+		comps=$(sed -n 's/^Components:[[:space:]]*//p' <<<"$rel")
+		[[ -n $comps ]] || { echo "deb.libre.computer $s's Release names no component; pass --above" >&2; exit 1; }
+		v=""
+		for c in $comps; do
+			v="$v $(curl -fsSL "https://deb.libre.computer/repo/dists/$s/$c/binary-$a/Packages.gz" | gzip -dc |
+				awk '/^Package: / {p = $2} /^Version: / && p == "libretech-keyring" {print $2}')" ||
+				{ echo "could not read deb.libre.computer $s $c $a; pass --above" >&2; exit 1; }
+		done
 		for x in $v; do
 			[[ -z $above ]] || dpkg --compare-versions "$x" gt "$above" && above=$x
 		done

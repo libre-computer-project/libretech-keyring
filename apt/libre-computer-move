@@ -256,11 +256,11 @@ systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 [ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 
 ARCH=$(dpkg --print-architecture)
-T=$(mktemp -d)
-trap 'rm -rf "$T"' EXIT
+T=$(mktemp -d) tmp=""
+trap 'rm -rf "$T"; [ -z "$tmp" ] || rm -f "$tmp"' EXIT
 # the scratch probes run none of apt's update hooks (appstream, packagekit, command-not-found): they would
 # refresh the system's caches from inside the postinst
-printf '#clear APT::Update::Pre-Invoke;\n#clear APT::Update::Post-Invoke;\n#clear APT::Update::Post-Invoke-Success;\n' > "$T/nohooks.conf"
+printf '#clear APT::Update::Pre-Invoke;\n#clear APT::Update::Post-Invoke;\n#clear APT::Update::Post-Invoke-Success;\n#clear APT::Update::Post-Invoke-Stats;\n' > "$T/nohooks.conf"
 trap 'exit 1' INT TERM
 chmod 755 "$T"
 stanza() { # KEY: the new source's stanza
@@ -379,6 +379,7 @@ if [ $has_new = 0 ]; then
 		chmod 0644 "$tmp"
 	fi
 	mv -T "$tmp" "$real_src"
+	tmp=""
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
 	# this script does not recognise (another scheme, deb-src only, another Signed-By) can make apt refuse
 	# every source beside the new one. Then nothing has changed yet: the previous file comes back
@@ -386,7 +387,10 @@ if [ $has_new = 0 ]; then
 		if [ -n "$src_backup" ]; then
 			cp -p "$src_backup" "$real_src"
 		elif [ -n "$src_link" ]; then
-			cp -P "$src_link" "$SRC.lc-new" && mv "$SRC.lc-new" "$SRC"
+			tmp=$(mktemp -u "$SRC.lc-XXXXXX")
+			cp -P "$src_link" "$tmp"
+			mv -T "$tmp" "$SRC"
+			tmp=""
 		else
 			rm -f "$SRC"
 		fi
@@ -433,6 +437,7 @@ for f in $old; do
 	chmod --reference="$real" "$tmp"
 	chown --reference="$real" "$tmp"
 	mv -T "$tmp" "$real"
+	tmp=""
 done
 retry_off
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
