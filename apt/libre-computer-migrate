@@ -33,7 +33,7 @@ W=$(mktemp -d)
 chmod 755 "$W"
 # the "renaming" mark is held only while an apt run of the renames is under way (safe_apt): the old package's
 # postrm then keeps the timer and the state for the rename; any other time, a removal is the owner's
-trap 'rm -rf "$W"; rm -f "$STATE/renaming"' EXIT
+trap '[ "${run_open:-0}" = 0 ] || run_end 2>/dev/null || true; rm -rf "$W"; rm -f "$STATE/renaming"' EXIT
 # a stop (shutdown) while apt or dpkg runs: the shell runs this once that command has finished, so dpkg is
 # never left half-done by us (the unit's KillMode=process signals this script alone)
 trap 'say "stopping after the step that was running"; exit 1' TERM
@@ -110,15 +110,27 @@ idle() { wait_lock apt-get -q check || true; }
 # "renaming": this boot, this script's pid and its start time (a pid can be reused in the same boot), so a mark
 # a power loss or a kill left is not a rename under way -- "-" for a value it cannot read, as the postrm reads
 # them (the start time: the 20th field after the ") " that ends the command name in stat)
+run_open=0
 run_begin() {
 	mkdir -p "$STATE"
 	printf '%s\n' "$@" >> "$STATE/unfinished"
-	bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+	# the list's begin record (this boot); the end record goes until the run ends
+	bootid > "$STATE/unfinished.begin"
+	rm -f "$STATE/unfinished.end"
+	bid=$(bootid)
 	bst=$(sed 's/.*) //' "/proc/$$/stat" 2>/dev/null | cut -d' ' -f20 || true)
-	echo "${bid:--} $$ ${bst:--}" > "$STATE/renaming"
+	echo "$bid $$ ${bst:--}" > "$STATE/renaming"
+	run_open=1
 }
-run_end() { rm -f "$STATE/renaming"; prune; }
-# prune: the list cut to the listed packages dpkg holds part-done (none: no list)
+# run_end: the run's end record (this boot, dpkg's state as the run left it: see provable), taken first, then the
+# list cut to what is part-done. (The exit trap runs it too, for a run a TERM stopped once apt had finished)
+run_end() {
+	rm -f "$STATE/renaming"
+	echo "$(bootid) $(dstamp)" > "$STATE/unfinished.end"
+	run_open=0
+	prune
+}
+# prune: the list cut to the listed packages dpkg holds part-done (none: no list, no records)
 prune() {
 	[ -e "$STATE/unfinished" ] || return 0
 	kept=$(partdone kept)
@@ -126,7 +138,25 @@ prune() {
 		printf '%s\n' $kept | sed 's/:.*//' | sort -u > "$STATE/unfinished.new"
 		mv "$STATE/unfinished.new" "$STATE/unfinished"
 	else
-		rm -f "$STATE/unfinished"
+		rm -f "$STATE/unfinished" "$STATE/unfinished.begin" "$STATE/unfinished.end"
+	fi
+}
+bootid() { b=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true); echo "${b:--}"; }
+# dstamp: when dpkg last changed its state (status or its journal, updates/), in seconds
+dstamp() { stat -c %Y /var/lib/dpkg/status /var/lib/dpkg/updates/* 2>/dev/null | sort -n | tail -n 1; }
+# provable: what the list names part-done is the migration's to finish -- no dpkg run since the run of ours that
+# left it: its end record (this boot, dpkg's state then) matches now; or, a power loss cut that run short (a begin
+# record of another boot, no end record), and dpkg has not run in this boot. Then no one else has touched a
+# listed package since, and one another apt touches from here on was ours part-done already
+provable() {
+	if [ -s "$STATE/unfinished.end" ]; then
+		[ "$(cat "$STATE/unfinished.end")" = "$(bootid) $(dstamp)" ]
+	elif [ -s "$STATE/unfinished.begin" ]; then
+		bt=$(awk '$1 == "btime" {print $2}' /proc/stat 2>/dev/null)
+		ds=$(dstamp)
+		[ "$(cat "$STATE/unfinished.begin")" != "$(bootid)" ] && [ -n "$bt" ] && [ -n "$ds" ] && [ "$ds" -lt "$bt" ]
+	else
+		return 1
 	fi
 }
 # record_pending NEW...: each new name's mark-to-be (its old name's), recorded just before the run that installs
@@ -176,12 +206,15 @@ safe_apt() {
 			return 1
 		fi
 		[ -z "$pend" ] || record_pending $pend
+		# what counts as ours inside apt's run: as checked above, before this run's own names go on the list
+		# (one of them another apt left part-done in between is not ours)
+		our=$(ours)
 		# shellcheck disable=SC2046
 		run_begin $(awk '$1 == "Inst" || $1 == "Conf" || $1 == "Remv" || $1 == "Purg" {n = $2; sub(/:.*/, "", n); print n}' "$W/plan")
 		# shellcheck disable=SC2086
 		# the same guards inside apt's run (its plan then final, its locks held): another apt may have changed
 		# the board since the plan above
-		if LC_RENAME_ALLOW="$allow" LC_RENAME_OURS="$(ours)" $APT -o "DPkg::Pre-Install-Pkgs::=$GUARD" \
+		if LC_RENAME_ALLOW="$allow" LC_RENAME_OURS="$our" $APT -o "DPkg::Pre-Install-Pkgs::=$GUARD" \
 			-o "DPkg::Tools::Options::$GUARD::Version=2" "$@" >"$W/out" 2>&1; then
 			run_end
 			cat "$W/out"
@@ -280,9 +313,11 @@ keyring_swap() {
 	fi
 	set -- "$W/dl"/libre-computer-archive-keyring_*.deb
 	[ -f "$1" ] || { say "apt fetched no libre-computer-archive-keyring; will retry"; return 1; }
-	# (no other apt or dpkg running first: the record is the rename's start, not a wait's)
+	# (no other apt or dpkg running first: the record is the rename's start, not a wait's). swap_resume=1: a
+	# swap a stop cut short (its record stands) is finished by the same dpkg run -- never by apt, which would
+	# remove libretech-keyring first
 	idle
-	record_pending libre-computer-archive-keyring
+	[ "${swap_resume:-0}" = 1 ] || record_pending libre-computer-archive-keyring
 	run_begin libre-computer-archive-keyring libretech-keyring
 	if wait_lock dpkg --auto-deconfigure --force-confold --force-confdef -i "$1"; then
 		run_end
@@ -330,16 +365,36 @@ fi
 # owner's: the renames wait for it (safe_apt). The list is first cut to what is part-done (a run a power loss or
 # a kill stopped left it whole), and goes once nothing on it is part-done
 idle
-prune
-mine=$(partdone listed)
+mine=""
+if [ -s "$STATE/unfinished" ] && ! provable; then
+	# dpkg has run since: what the list names part-done may be someone else's now
+	say "dpkg has run since an earlier run of this script's stopped part-way; what that run left part-done is not provably this script's any more, and is left to dpkg's owner"
+	rm -f "$STATE/unfinished" "$STATE/unfinished.begin" "$STATE/unfinished.end"
+elif [ -s "$STATE/unfinished" ]; then
+	# a journal that run left (a power loss in dpkg's run) folded in first: apt refuses to run while dpkg's
+	# journal holds entries, and an old name part-done (never configured here) leaves nothing else to fold it
+	if [ -n "$(ls -A /var/lib/dpkg/updates 2>/dev/null)" ]; then
+		run_begin
+		wait_lock sh -c 'dpkg --set-selections < /dev/null' || true
+		run_end
+	fi
+	prune
+	mine=$(partdone listed)
+fi
 if [ -n "$mine" ]; then
 	say "finishing what an earlier run left part-done:$mine"
+	run_begin $mine
 	# shellcheck disable=SC2086
 	wait_lock dpkg --configure --force-confold --force-confdef $mine || true
+	run_end
+	# one left half-installed (dpkg cannot configure it): the keyring by the swap's own dpkg run, any other by
+	# apt reinstalling it
 	for x in $(partdone listed); do
 		dpkg-query -W -f '${db:Status-Status}\n' "$x" 2>/dev/null | grep -qx half-installed || continue
-		allow=" "
-		safe_apt install --reinstall --no-install-recommends "$x" || true
+		case ${x%%:*} in
+			libre-computer-archive-keyring) swap_resume=1; keyring_swap || true; swap_resume=0 ;;
+			*) allow=" "; safe_apt install --reinstall --no-install-recommends "$x" || true ;;
+		esac
 	done
 	mine=$(partdone listed)
 	if [ -n "$mine" ]; then
@@ -347,7 +402,6 @@ if [ -n "$mine" ]; then
 		failed=1 dpkg_broken=1
 	fi
 fi
-prune
 # the marks as they are now that dpkg is free (an apt run that installed the keyring may have just ended)
 snapshot
 
