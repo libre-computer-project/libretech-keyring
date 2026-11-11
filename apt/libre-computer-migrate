@@ -30,7 +30,9 @@ GUARD=/usr/lib/libre-computer-archive-keyring/libre-computer-rename-guard
 APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o APT::Install-Suggests=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
 W=$(mktemp -d)
 # the "renaming" mark is held only while an apt run of the renames is under way (safe_apt): the old package's
-# postrm then keeps the timer and the state for the rename; any other time, a removal is the owner's
+# postrm then keeps the timer and the state for the rename; any other time, a removal is the owner's.
+# broke: an apt run of this one's failed past its locks (dpkg may be half-done; see "unfinished" in safe_apt)
+broke=0
 trap 'rm -rf "$W"; rm -f "$STATE/renaming"' EXIT
 # a stop (shutdown) while apt or dpkg runs: the shell runs this once that command has finished, so dpkg is
 # never left half-done by us (the unit's KillMode=process signals this script alone)
@@ -65,6 +67,10 @@ wait_lock() {
 		sleep 30
 	done
 }
+# idle: wait (as wait_lock does) until no other apt or dpkg runs. A root apt-get -s takes apt's and dpkg's
+# locks and changes nothing (dpkg left half-done by someone else makes it fail at once: then nothing to wait for)
+# shellcheck disable=SC2086
+idle() { wait_lock $APT -s install || true; }
 
 # safe_apt ARGS: apt-get ARGS, only if its plan removes nothing but the names in $allow (set by the caller). The plan is read
 # again before every attempt: while a lock is held, another apt may change what this one would do
@@ -72,11 +78,11 @@ safe_apt() {
 	si=0 replanned=0
 	while :; do
 		if ! $APT -s "$@" >"$W/plan" 2>&1; then
-			# another apt may have started since dpkg was free and left packages unpacked: wait for it, configure
-			# what it left, then plan once more
+			# another apt may have started since dpkg was free (a root apt-get -s takes the lock): wait for it,
+			# then plan once more
 			if [ $replanned = 0 ]; then
 				replanned=1
-				wait_lock dpkg --configure -a --force-confold --force-confdef || true
+				idle
 				continue
 			fi
 			say "apt cannot plan 'apt-get $*'; will retry:"
@@ -99,14 +105,23 @@ safe_apt() {
 		bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
 		bst=$(sed 's/.*) //' "/proc/$$/stat" 2>/dev/null | cut -d' ' -f20 || true)
 		echo "${bid:--} $$ ${bst:--}" > "$STATE/renaming"
+		# and "unfinished": what this run leaves half-done in dpkg (a power loss, a kill, a dpkg error) is ours
+		# to finish; it goes only when no run of this script's has failed since it was set
+		touch "$STATE/unfinished"
 		# shellcheck disable=SC2086
 		# the same guard inside apt's run (its plan then final, its locks held): another apt may have changed
 		# the board since the plan above
 		if LC_RENAME_ALLOW="$allow" $APT -o "DPkg::Pre-Install-Pkgs::=$GUARD" -o "DPkg::Tools::Options::$GUARD::Version=2" \
 			"$@" >"$W/out" 2>&1; then
-			rm -f "$STATE/renaming"; cat "$W/out"; return 0
+			rm -f "$STATE/renaming"
+			[ $broke = 1 ] || rm -f "$STATE/unfinished"
+			cat "$W/out"
+			return 0
 		fi
 		rm -f "$STATE/renaming"
+		# a lock or the guard refused it before dpkg ran; any other failure may have left dpkg half-done
+		is_locked || grep -q '^libre-computer-rename-guard: ' "$W/out" || broke=1
+		[ $broke = 1 ] || rm -f "$STATE/unfinished"
 		if is_locked && [ $si -lt 240 ]; then
 			si=$((si + 1))
 			sleep 30
@@ -132,9 +147,9 @@ snapshot() {
 # can never take a new name that was left automatic
 unmarked=" "
 keep_mark() {
-	# apt-mark takes no lock: wait until no other apt or dpkg runs (dpkg --configure -a takes dpkg's lock, and
-	# has nothing to do here), so the copy is not written over by an apt that ends after it
-	wait_lock dpkg --configure -a --force-confold --force-confdef || true
+	# apt-mark takes no lock: wait until no other apt or dpkg runs, so the copy is not written over by an apt
+	# that ends after it
+	idle
 	for p in "$@"; do
 		o=${p%%:*} n=${p#*:}
 		# the old name's mark, from this run's snapshot; or, its old name gone before this run (an earlier run
@@ -209,11 +224,19 @@ if [ -e "$STATE/move-pending" ]; then
 	[ -e "$STATE/move-pending" ] || [ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || exit 0
 fi
 
-# an install or removal power loss interrupted
-if ! wait_lock dpkg --configure -a --force-confold --force-confdef; then
-	say "dpkg --configure -a failed; will retry:"
-	tail -n 15 "$W/out" | sed 's/^/  /'
-	failed=1 dpkg_broken=1
+# what an apt run of this script's left half-done (a power loss, a kill, a dpkg error: "unfinished") is finished
+# first. A package someone else left half-done is the owner's: this script does not configure it (apt then
+# refuses to plan the renames, and the timer tries again)
+if [ -e "$STATE/unfinished" ]; then
+	if wait_lock dpkg --configure -a --force-confold --force-confdef; then
+		rm -f "$STATE/unfinished"
+	else
+		say "dpkg --configure -a failed; will retry:"
+		tail -n 15 "$W/out" | sed 's/^/  /'
+		failed=1 dpkg_broken=1
+	fi
+else
+	idle
 fi
 # the marks as they are now that dpkg is free (an apt run that installed the keyring may have just ended)
 snapshot

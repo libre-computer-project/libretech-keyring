@@ -802,14 +802,50 @@ guarded() { # ALLOW APT-ARGS...
 	chroot "$mnt" env LC_RENAME_ALLOW="$allow" DEBIAN_FRONTEND=noninteractive apt-get -q -y --no-install-recommends \
 		-o "DPkg::Pre-Install-Pkgs::=$G" -o "DPkg::Tools::Options::$G::Version=2" "$@" >> "$W/s54.log" 2>&1
 }
+# (installing libre-computer-gpio takes libretech-gpio and libretech-dtoverlay, which depends on it)
 guarded " " install libre-computer-gpio
-check "S54: an install that removes libretech-gpio, not allowed: refused, nothing changed" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-gpio && ! installed libre-computer-gpio && grep -q 'rename-guard: this run would also remove libretech-gpio' '$W/s54.log'"
+check "S54: an install that removes libretech-gpio, not allowed: refused, nothing changed" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-gpio && ! installed libre-computer-gpio && grep -q 'rename-guard: this run would also remove .*libretech-gpio' '$W/s54.log'"
 guarded " libretech-gpio " install libre-computer-gpio
-check "S54: the same install with libretech-gpio allowed: done" bash -c "$(declare -f installed); mnt='$mnt'; ! installed libretech-gpio && installed libre-computer-gpio"
+check "S54: allowed libretech-gpio alone: refused for libretech-dtoverlay" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-dtoverlay && ! installed libre-computer-gpio && grep -q 'rename-guard: this run would also remove libretech-dtoverlay;' '$W/s54.log'"
+guarded " libretech-gpio libretech-dtoverlay " install libre-computer-gpio
+check "S54: the same install with both allowed: done" bash -c "$(declare -f installed); mnt='$mnt'; ! installed libretech-gpio && installed libre-computer-gpio"
 guarded " " remove libretech-alsa-ucm-conf
 check "S54: a removal run, not allowed: refused" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-alsa-ucm-conf"
 guarded " libretech-alsa-ucm-conf " remove libretech-alsa-ucm-conf
 check "S54: the same removal allowed: done" bash -c "$(declare -f installed); mnt='$mnt'; ! installed libretech-alsa-ucm-conf"
+cleanup
+
+echo "== S55: a package the owner left half-configured is not the migration's to configure"
+setup
+install_keyring
+d=$W/pkg-owner-broken
+rm -rf "$d"; mkdir -p "$d/DEBIAN"
+printf 'Package: owner-broken\nVersion: 1\nArchitecture: all\nMaintainer: t <t@invalid>\nDescription: a postinst that fails\n' > "$d/DEBIAN/control"
+printf '#!/bin/sh\necho run >> /var/tmp/owner-broken.count\nexit 1\n' > "$d/DEBIAN/postinst"
+chmod 755 "$d/DEBIAN/postinst"
+dpkg-deb --root-owner-group -b "$d" "$mnt/tmp/owner-broken.deb" >/dev/null
+in_root dpkg -i /tmp/owner-broken.deb > "$W/s55a.log" 2>&1
+check "S55: the precondition: owner-broken half-configured, its postinst run once" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' owner-broken | grep -qx half-configured && [ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ]"
+migrate s55.log
+check "S55: the migration did not configure it (its postinst not run again)" bash -c "[ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ]"
+cleanup
+
+echo "== S56: a package an apt run of the migration's left unpacked (its unfinished mark): the next run configures it"
+setup
+install_keyring
+dummy lc-left
+in_root dpkg --unpack /tmp/lc-left.deb > "$W/s56a.log" 2>&1
+touch "$mnt$S/unfinished"
+migrate s56.log
+check "S56: lc-left configured, the mark gone" bash -c "$(declare -f installed); mnt='$mnt'; installed lc-left && test ! -e '$mnt$S/unfinished'"
+cleanup
+
+echo "== S57: the board's own entry written with a doubled slash in its path is its own entry"
+setup
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/own-copy.gpg"
+echo 'deb [signed-by=/usr/share/keyrings/own-copy.gpg] file:///srv//test-repo trixie main' > "$mnt/etc/apt/sources.list.d/mine.list"
+LCKEY= install_keyring
+check "S57: the board moves on its own entry: no second source written" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -e '$mnt$S/migrate-pending'"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"

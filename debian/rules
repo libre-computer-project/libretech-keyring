@@ -8,3 +8,7 @@
 # dpkg never starts, restarts or stops the unit; libre-computer-move (the postinst) enables it and arms its
 # one-shot timer.
 override_dh_systemd_start:
+
+# nor enables the timer: dh_systemd_enable would enable it on every first install, whether or not there is
+# anything to move (the postinst and libre-computer-move enable it when there is work; the postrm disables it)
+override_dh_systemd_enable:
