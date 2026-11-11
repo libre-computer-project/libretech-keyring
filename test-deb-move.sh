@@ -757,20 +757,60 @@ fi
 cleanup
 
 echo "== S52: a renaming mark left by a killed migration does not keep the timer; one of a live migration does"
-for s52 in stale live; do
+for s52 in stale reused live; do
 	deblibre_repo "$deblibre_keyring"
 	setup_deblibre
 	upgrade
-	if [[ $s52 == stale ]]; then pid=999999; while kill -0 "$pid" 2>/dev/null; do pid=$((pid + 1)); done; else pid=$$; fi
-	echo "$(cat /proc/sys/kernel/random/boot_id) $pid" > "$mnt$S/renaming"
+	# the mark as the migration writes it: boot id, pid, the pid's start time (stat field 22)
+	pid=$$ start=$(awk '{print $22}' /proc/$$/stat)
+	case $s52 in
+		stale) pid=999999; while kill -0 "$pid" 2>/dev/null; do pid=$((pid + 1)); done ;;
+		reused) start=$((start + 1)) ;;   # a live pid, but not the process that wrote the mark
+	esac
+	echo "$(cat /proc/sys/kernel/random/boot_id) $pid $start" > "$mnt$S/renaming"
 	in_root env DEBIAN_FRONTEND=noninteractive dpkg -r libretech-keyring > "$W/s52-$s52.log" 2>&1
-	if [[ $s52 == stale ]]; then
-		check "S52: stale mark: the timer's link goes with the package" test ! -e "$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer"
-	else
+	if [[ $s52 == live ]]; then
 		check "S52: live mark: the timer's link stays for the rename" test -L "$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer"
+	else
+		check "S52: $s52 mark: the timer's link goes with the package" test ! -e "$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer"
 	fi
 	cleanup
 done
+
+echo "== S53: a migration stopped between a rename's install and its mark: the next run gives the new name the old one's"
+setup
+install_keyring
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+in_root apt-mark auto libretech-gpio >/dev/null 2>&1
+# what the stopped run left: its record, then apt's install (the old name gone, the new one manual)
+echo auto > "$mnt$S/pending-libre-computer-gpio"
+in_root apt-get -q update > "$W/s53a.log" 2>&1
+in_root env DEBIAN_FRONTEND=noninteractive apt-get -q -y --no-install-recommends install libre-computer-gpio >> "$W/s53a.log" 2>&1
+check "S53: the precondition: libretech-gpio gone, libre-computer-gpio in and manual" bash -c "$(declare -f installed); mnt='$mnt'; ! installed libretech-gpio && installed libre-computer-gpio && chroot '$mnt' apt-mark showmanual | grep -qx libre-computer-gpio"
+migrate s53.log
+check "S53: libre-computer-gpio automatic, as libretech-gpio was; the record gone" bash -c "chroot '$mnt' apt-mark showauto | grep -qx libre-computer-gpio && test ! -e '$mnt$S/pending-libre-computer-gpio'"
+cleanup
+
+echo "== S54: the guard inside apt's run refuses a removal not allowed (install and removal runs), and lets an allowed one through"
+setup
+install_keyring
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+in_root apt-get -q update > "$W/s54.log" 2>&1
+G=/usr/lib/libre-computer-archive-keyring/libre-computer-rename-guard
+guarded() { # ALLOW APT-ARGS...
+	local allow=$1; shift
+	chroot "$mnt" env LC_RENAME_ALLOW="$allow" DEBIAN_FRONTEND=noninteractive apt-get -q -y --no-install-recommends \
+		-o "DPkg::Pre-Install-Pkgs::=$G" -o "DPkg::Tools::Options::$G::Version=2" "$@" >> "$W/s54.log" 2>&1
+}
+guarded " " install libre-computer-gpio
+check "S54: an install that removes libretech-gpio, not allowed: refused, nothing changed" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-gpio && ! installed libre-computer-gpio && grep -q 'rename-guard: this run would also remove libretech-gpio' '$W/s54.log'"
+guarded " libretech-gpio " install libre-computer-gpio
+check "S54: the same install with libretech-gpio allowed: done" bash -c "$(declare -f installed); mnt='$mnt'; ! installed libretech-gpio && installed libre-computer-gpio"
+guarded " " remove libretech-alsa-ucm-conf
+check "S54: a removal run, not allowed: refused" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-alsa-ucm-conf"
+guarded " libretech-alsa-ucm-conf " remove libretech-alsa-ucm-conf
+check "S54: the same removal allowed: done" bash -c "$(declare -f installed); mnt='$mnt'; ! installed libretech-alsa-ucm-conf"
+cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

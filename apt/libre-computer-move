@@ -226,6 +226,9 @@ flock 9
 T="" tmp=""
 trap '[ -z "$T" ] || rm -rf "$T"; [ -z "$tmp" ] || rm -f "$tmp"' EXIT
 trap 'exit 1' INT TERM HUP
+# a temporary file a power loss left beside a source (the trap above never ran; apt notes such a file on every
+# run). Only this script makes them (the name a source's plus .lc- and six characters), and only under the lock
+find "$SP" -maxdepth 1 -name '*.lc-??????' \( -type f -o -type l \) -delete 2>/dev/null || true
 
 # step 1 below puts the new source in place, then asks apt whether it can still read the sources, and puts the
 # previous file back if not. The check's record (C) is written before the new file goes in and removed once the
@@ -413,9 +416,14 @@ if [ $has_new = 0 ]; then
 	# keeps its own untouched (nothing written, no copy kept; the timer asks again). apt names the copy's
 	# files in what it says, so the copy's directory is read as the real one. (A directory of its own: the
 	# probe's $T/parts holds the probe stanza)
+	# Each file's content, through any symlink (a relative link would dangle in the copy, and apt skips a
+	# dangling link without a word); what is not a readable file (a dangling link, a link to /dev/null) apt
+	# reads as nothing, and the copy leaves out
 	mkdir "$T/withnew"
-	cp -a "$SP/." "$T/withnew/"
-	rm -f "$T/withnew/${SRC##*/}"
+	for f in "$SP"/*; do
+		[ -f "$f" ] && [ "${f##*/}" != "${SRC##*/}" ] || continue
+		cat "$f" > "$T/withnew/${f##*/}"
+	done
 	cp "$T/src" "$T/withnew/${SRC##*/}"
 	apt-get -q -o Dir::Cache="$T/icache" -o Dir::Etc::SourceParts="$T/withnew" indextargets >/dev/null 2>"$T/pre.raw" || true
 	awk -v a="$T/withnew" -v b="$SP" '{

@@ -1,0 +1,29 @@
+#!/bin/sh
+# libre-computer-rename-guard -- apt's DPkg::Pre-Install-Pkgs hook on libre-computer-migrate's apt runs (never
+# installed as a configuration: the migration passes it with -o on its own runs alone).
+#
+# apt runs it after its final plan, holding its locks, before it calls dpkg; a failure stops the run with
+# nothing changed. It refuses a run that would remove any package not in LC_RENAME_ALLOW (space-separated
+# names): the migration checks apt's plan (apt-get -s) first, but another apt can change the board between
+# that plan and the run. apt hands it the actions on stdin (protocol version 2: a "VERSION 2" line, the
+# configuration, a blank line, then one line per package whose last field is **REMOVE** for a removal). Any
+# other input, a version 1 list of .deb files with no removals in it included, is refused too.
+set -eu
+IFS= read -r v || v=""
+if [ "$v" != "VERSION 2" ]; then
+	echo "libre-computer-rename-guard: apt did not hand over its actions (got '$v'); refusing" >&2
+	exit 1
+fi
+# the configuration, up to the blank line
+while IFS= read -r l; do [ -n "$l" ] || break; done
+bad=""
+while read -r pkg rest; do
+	case $rest in *"**REMOVE**") ;; *) continue ;; esac
+	pkg=${pkg%%:*}
+	case " ${LC_RENAME_ALLOW:-} " in *" $pkg "*) ;; *) bad="$bad $pkg" ;; esac
+done
+if [ -n "$bad" ]; then
+	echo "libre-computer-rename-guard: this run would also remove$bad; refusing (nothing changed)" >&2
+	exit 1
+fi
+exit 0

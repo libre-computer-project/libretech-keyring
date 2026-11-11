@@ -26,6 +26,7 @@ export LC_ALL=C
 # no AutomaticRemove: a board that sets it would have every attempt also remove what nothing needs any more,
 # which the removal guard refuses, so no rename would ever go in
 # and no Suggests (a board may set Install-Suggests): a rename adds nothing the board did not have
+GUARD=/usr/lib/libre-computer-archive-keyring/libre-computer-rename-guard
 APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o APT::Install-Suggests=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
 W=$(mktemp -d)
 # the "renaming" mark is held only while an apt run of the renames is under way (safe_apt): the old package's
@@ -93,11 +94,18 @@ safe_apt() {
 		fi
 		mkdir -p "$STATE"
 		# this boot and this script's pid: a mark a power loss or a kill left is not a rename under way
-		# ("-" for a boot id it cannot read, as the postrm reads it)
+		# and its start time (a pid can be reused in the same boot) -- "-" for a value it cannot read, as the
+		# postrm reads them (the start time: the 20th field after the ") " that ends the command name in stat)
 		bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
-		echo "${bid:--} $$" > "$STATE/renaming"
+		bst=$(sed 's/.*) //' "/proc/$$/stat" 2>/dev/null | cut -d' ' -f20 || true)
+		echo "${bid:--} $$ ${bst:--}" > "$STATE/renaming"
 		# shellcheck disable=SC2086
-		if $APT "$@" >"$W/out" 2>&1; then rm -f "$STATE/renaming"; cat "$W/out"; return 0; fi
+		# the same guard inside apt's run (its plan then final, its locks held): another apt may have changed
+		# the board since the plan above
+		if LC_RENAME_ALLOW="$allow" $APT -o "DPkg::Pre-Install-Pkgs::=$GUARD" -o "DPkg::Tools::Options::$GUARD::Version=2" \
+			"$@" >"$W/out" 2>&1; then
+			rm -f "$STATE/renaming"; cat "$W/out"; return 0
+		fi
 		rm -f "$STATE/renaming"
 		if is_locked && [ $si -lt 240 ]; then
 			si=$((si + 1))
@@ -129,15 +137,25 @@ keep_mark() {
 	wait_lock dpkg --configure -a --force-confold --force-confdef || true
 	for p in "$@"; do
 		o=${p%%:*} n=${p#*:}
-		case $had in *" $o "*) ;; *) continue ;; esac
-		[ "$(st "$n")" = installed ] || continue
-		case $autos in *" $o "*) m=auto ;; *) m=manual ;; esac
-		case $newmanual in *" $n "*) m=manual ;; esac
+		# the old name's mark, from this run's snapshot; or, its old name gone before this run (an earlier run
+		# stopped between the install and here), the one that run recorded before the install (pending-NEW)
+		# (a record whose new name is not in is dropped: no install of ours to give a mark to)
+		if [ "$(st "$n")" != installed ]; then rm -f "$STATE/pending-$n"; continue; fi
+		case $had in
+			*" $o "*)
+				case $autos in *" $o "*) m=auto ;; *) m=manual ;; esac
+				# a new name the owner had installed already stays manual
+				case $newmanual in *" $n "*) m=manual ;; esac ;;
+			*)
+				# (the new name, installed by that run, is manual in this run's snapshot: the record decides)
+				[ -s "$STATE/pending-$n" ] || continue
+				m=$(cat "$STATE/pending-$n") ;;
+		esac
 		# manual an earlier run could not set (only manual is remembered: an automatic one could undo a manual
 		# mark the owner set since, and a new name left manual is never taken by autoremove)
 		[ ! -s "$STATE/mark-$n" ] || m=manual
 		if wait_lock apt-mark "$m" "$n"; then
-			rm -f "$STATE/mark-$n"
+			rm -f "$STATE/mark-$n" "$STATE/pending-$n"
 		else
 			say "could not mark $n $m; keeping $o for now"
 			unmarked="$unmarked$o "
@@ -222,6 +240,13 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 		done
 		if [ -n "$new" ]; then
 			say "installing$new (in place of their old names)"
+			# each new name's mark-to-be, recorded before apt takes the old names: keep_mark below sets it, or the
+			# next run does if this one stops in between (then the old name is gone from its snapshot)
+			for p in $pairs; do
+				o=${p%%:*} n=${p#*:}
+				case "$new " in *" $n "*) ;; *) continue ;; esac
+				case $autos in *" $o "*) echo auto ;; *) echo manual ;; esac > "$STATE/pending-$n"
+			done
 			# a rename adds nothing the board did not have: not the new packages' Recommends (dtoverlay's i2c-tools,
 			# spi-tools; xorg's xserver-xorg), which an owner may have left out on purpose. All in one step (their
 			# dependencies on one another resolve together); if apt refuses that, each on its own, so one name

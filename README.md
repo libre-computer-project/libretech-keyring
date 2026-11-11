@@ -28,7 +28,9 @@ in a file with others is disabled in place (the original kept there too). It ena
 boot and every 6 hours until it succeeds (a timer, so no boot target waits on apt). That installs the
 `libre-computer` name of every package the board has under its old one (`libretech-gpio` →
 `libre-computer-gpio`, …; each new package Breaks, Replaces and Provides its old name) and removes nothing else:
-it reads apt's plan first and refuses a step that would remove any other package. It installs no kernel: the
+it reads apt's plan first and refuses a step that would remove any other package, and the same check runs again
+inside apt's run (a `DPkg::Pre-Install-Pkgs` hook, before dpkg is called), in case another apt changed the board
+in between. It installs no kernel: the
 armhf meta-package's new name (`linux-image-lc-lts-arm` → `-armhf`) comes with the owner's own upgrade, through
 the transitional package, and the timer's next run then removes the old name (each new name keeps its old name's
 manual or automatic mark, so autoremove never takes it). Removing the keyring package stops and disables the timer;

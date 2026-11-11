@@ -5,13 +5,15 @@ S=/var/lib/libre-computer-archive-keyring
 # the old libretech-keyring before it unpacks libre-computer-archive-keyring, which takes the unit and the state
 # over. Then the timer's link and the state stay. Any other removal (libre-computer-archive-keyring itself, or the
 # owner removing libretech-keyring by hand) takes them with it: nothing would run the work left
-# The mark names the boot and the migration's pid: one a power loss or a kill left behind (that process gone) is
-# no rename under way
+# The mark names the boot, the migration's pid and that process's start time: one a power loss or a kill left
+# behind (that process gone, or its pid now another's) is no rename under way
 renaming() {
 	[ "${DPKG_MAINTSCRIPT_PACKAGE:-}" != libre-computer-archive-keyring ] && [ -s "$S/renaming" ] || return 1
-	read -r rb rp < "$S/renaming" || return 1
+	read -r rb rp rs < "$S/renaming" || return 1
+	[ -n "${rp:-}" ] && kill -0 "$rp" 2>/dev/null || return 1
 	bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
-	[ "$rb" = "${bid:--}" ] && [ -n "${rp:-}" ] && kill -0 "$rp" 2>/dev/null
+	bst=$(sed 's/.*) //' "/proc/$rp/stat" 2>/dev/null | cut -d' ' -f20 || true)
+	[ "$rb" = "${bid:--}" ] && [ "${rs:-}" = "${bst:--}" ]
 }
 case "$1" in
 	purge)

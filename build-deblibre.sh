@@ -43,6 +43,10 @@ if [[ -z $below ]]; then
 			vall=$(curl -fsSL "https://packages.libre.computer/deb/dists/$s/main/binary-all/Packages.gz" | gzip -dc |
 				awk '/^Package: / {p = $2} /^Version: / && p == "libre-computer-archive-keyring" {print $2}') ||
 				{ echo "could not read packages.libre.computer $s all; pass --below" >&2; exit 1; }
+			# counted whatever architectures the suite lists beside it (a lower bound may only go lower)
+			for x in $vall; do
+				[[ -z $below ]] || dpkg --compare-versions "$x" lt "$below" && below=$x
+			done
 		fi
 		for a in arm64 armhf amd64; do
 			# an architecture the suite does not publish has no board reading it there
@@ -95,6 +99,7 @@ P=$T/pkg
 install -D -m 0644 "$HERE/libre-computer-deb.gpg" "$P/usr/share/keyrings/libre-computer-deb.gpg"
 install -D -m 0755 "$HERE/apt/libre-computer-move" "$P/usr/lib/libre-computer-archive-keyring/libre-computer-move"
 install -D -m 0755 "$HERE/apt/libre-computer-migrate" "$P/usr/lib/libre-computer-archive-keyring/libre-computer-migrate"
+install -D -m 0755 "$HERE/apt/libre-computer-rename-guard" "$P/usr/lib/libre-computer-archive-keyring/libre-computer-rename-guard"
 install -D -m 0644 "$HERE/apt/libre-computer-migrate.service" "$P/usr/lib/systemd/system/libre-computer-migrate.service"
 install -D -m 0644 "$HERE/apt/libre-computer-migrate.timer" "$P/usr/lib/systemd/system/libre-computer-migrate.timer"
 install -d "$P/DEBIAN"
