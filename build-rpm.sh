@@ -1,5 +1,6 @@
 #!/bin/bash
-# build-rpm.sh -- build libre-computer-repos (noarch RPM for Fedora): the dnf repository definition and the key.
+# build-rpm.sh -- build libre-computer-release (noarch RPM for Fedora; it obsoletes libre-computer-repos): the dnf
+# repository definition and the key.
 #
 #   build-rpm.sh [--version YYYY.MM.DD] [--out DIR]
 #
@@ -29,13 +30,13 @@ key_home "$T/gnupg"
 mkdir -p "$T/rpm/SOURCES" "$T/rpm/SPECS" "$out"
 key_armored "$T/gnupg" >"$T/rpm/SOURCES/RPM-GPG-KEY-libre-computer"
 cp "$PKG_ROOT/packaging/rpm/libre-computer.repo" "$T/rpm/SOURCES/"
-cp "$PKG_ROOT/packaging/rpm/libre-computer-repos.spec" "$T/rpm/SPECS/"
+cp "$PKG_ROOT/packaging/rpm/libre-computer-release.spec" "$T/rpm/SPECS/"
 
-log "building libre-computer-repos $version from $(source_commit), key $(key_fpr "$T/gnupg")"
+log "building libre-computer-release $version from $(source_commit), key $(key_fpr "$T/gnupg")"
 # _buildhost: the header names the published host, never the machine that built it
 rpmbuild --define "_topdir $T/rpm" --define "_buildhost deb.libre.computer" \
 	--define "lc_version $version" --define "lc_keyid $(key_rpm_id "$T/gnupg")" \
-	-bb "$T/rpm/SPECS/libre-computer-repos.spec" >"$T/rpmbuild.log" 2>&1 ||
+	-bb "$T/rpm/SPECS/libre-computer-release.spec" >"$T/rpmbuild.log" 2>&1 ||
 	{ tail -20 "$T/rpmbuild.log" >&2; die "rpmbuild failed"; }
-cp "$T"/rpm/RPMS/noarch/libre-computer-repos-"$version"-1.noarch.rpm "$out/"
-echo "$out/libre-computer-repos-$version-1.noarch.rpm"
+cp "$T"/rpm/RPMS/noarch/libre-computer-release-"$version"-1.noarch.rpm "$out/"
+echo "$out/libre-computer-release-$version-1.noarch.rpm"

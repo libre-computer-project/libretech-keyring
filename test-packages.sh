@@ -33,6 +33,10 @@ if [[ -f $rpm ]]; then
 	check "rpm installs the key under /etc/pki/rpm-gpg" grep -qx /etc/pki/rpm-gpg/RPM-GPG-KEY-libre-computer <<<"$files"
 	check "rpm installs /etc/yum.repos.d/libre-computer.repo" grep -qx /etc/yum.repos.d/libre-computer.repo <<<"$files"
 	check "rpm is noarch" test "$(rpm -qp --qf '%{ARCH}' "$rpm" 2>/dev/null)" = noarch
+	check "rpm is libre-computer-release, obsoleting and providing libre-computer-repos (its name until 2026-11-11)" \
+		bash -c "[[ \$(rpm -qp --qf '%{NAME}' '$rpm' 2>/dev/null) == libre-computer-release ]] &&
+			rpm -qp --obsoletes '$rpm' 2>/dev/null | grep -q '^libre-computer-repos < ' &&
+			rpm -qp --provides '$rpm' 2>/dev/null | grep -q '^libre-computer-repos = '"
 	check "rpm header names the published host, not the builder" test "$(rpm -qp --qf '%{BUILDHOST}' "$rpm" 2>/dev/null)" = deb.libre.computer
 	mkdir -p "$T/x" && (cd "$T/x" && rpm2archive -n - <"$rpm" 2>/dev/null | bsdtar -xf - 2>/dev/null)
 	ifpr=$(gpg --batch --with-colons --show-keys "$T/x/etc/pki/rpm-gpg/RPM-GPG-KEY-libre-computer" 2>/dev/null |

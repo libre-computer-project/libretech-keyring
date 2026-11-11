@@ -7,11 +7,11 @@ package below is built from it.
 | Distribution | Package | Installs | Build |
 |---|---|---|---|
 | Debian, Ubuntu | `libre-computer-archive-keyring` (and `libretech-keyring`, a transitional package for one release) | `/usr/share/keyrings/libre-computer-deb.gpg`; on a board still on deb.libre.computer, the move to packages.libre.computer (below) | `build.sh` (dpkg-buildpackage) |
-| Fedora | `libre-computer-repos` | `/etc/pki/rpm-gpg/RPM-GPG-KEY-libre-computer`, `/etc/yum.repos.d/libre-computer.repo` | `build-rpm.sh` |
+| Fedora | `libre-computer-release` (obsoletes `libre-computer-repos`, its name until 2026-11-11) | `/etc/pki/rpm-gpg/RPM-GPG-KEY-libre-computer`, `/etc/yum.repos.d/libre-computer.repo` | `build-rpm.sh` |
 | Arch Linux, Arch Linux ARM | `libre-computer-keyring` | `/usr/share/pacman/keyrings/libre-computer{.gpg,-trusted,-revoked}` | `build-arch.sh` |
 
 `test-packages.sh` builds the Fedora and Arch packages and checks their contents and how a renewed key reaches
-a host (rpm keeps an imported key, so `libre-computer-repos` deletes the stored copy before importing; pacman
+a host (rpm keeps an imported key, so `libre-computer-release` deletes the stored copy before importing; pacman
 loads the keyring with `pacman-key --populate libre-computer`). The Fedora package installs the repo definition;
 the pacman package cannot (pacman has no `conf.d`), so on install it prints the stanza to add to
 `/etc/pacman.conf`, with `SigLevel = Required` (pacman's default would take an unsigned database). The builds need `rpmbuild`, `makepkg`,
