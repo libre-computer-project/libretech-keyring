@@ -246,11 +246,6 @@ migrate() { # LOG: the throwaway key in place, then the migration
 	# bounded: a migration that loops fails its checks instead of hanging the test
 	timeout --kill-after=30 900 chroot "$mnt" /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/$1" 2>&1
 }
-left_by_us() { # NAME...: the unfinished record a run of the migration's leaves when it ends with these part-done
-	# (its end record: this boot, dpkg's state as it left it -- taken now, as the run's end would)
-	printf '%s\n' "$@" > "$mnt$S/unfinished"
-	echo "$(cat /proc/sys/kernel/random/boot_id) $(chroot "$mnt" sh -c 'stat -c %Y /var/lib/dpkg/status /var/lib/dpkg/updates/* 2>/dev/null | sort -n | tail -n 1')" > "$mnt$S/unfinished.end"
-}
 dummy() { # NAME [CONTROL-LINE]: a local package built into the chroot's /tmp
 	local d=$W/pkg-$1
 	rm -rf "$d"; mkdir -p "$d/DEBIAN"
@@ -317,14 +312,11 @@ migrate s10b.log
 check "S10: a package depending on an old name keeps it through its Provides" bash -c "$(declare -f installed); mnt='$mnt'; grep -q 'done: the board reads' '$W/s10b.log' && installed user-app2 && installed libre-computer-gpio && ! installed libretech-gpio"
 cleanup
 
-echo "== S11: a dpkg run of the migration's own interrupted, a dead third-party source, an apt lock held at the start"
+echo "== S11: a package left part-done, a dead third-party source, an apt lock held at the start"
 setup
 install_keyring
 dummy half-done
 in_root dpkg --unpack /tmp/half-done.deb >/dev/null 2>&1
-# left by an apt run of the migration's (listed in its unfinished record): ours to finish (S55: someone else's
-# is not)
-left_by_us half-done
 echo 'deb [trusted=yes] file:///srv/gone ./' > "$mnt/etc/apt/sources.list.d/gone.list"
 cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 if [[ -x $mnt/usr/bin/python3 ]]; then
@@ -335,15 +327,19 @@ fi
 t0=$SECONDS
 in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s11.log" 2>&1
 [[ -z ${holder:-} ]] || wait "$holder"
-check "S11: the migration succeeds" grep -q 'done: the board reads' "$W/s11.log"
-grep -q 'done: the board reads' "$W/s11.log" ||
-	{ echo "   -- the migration's last lines:"; tail -n 20 "$W/s11.log" | sed 's/^/   | /'; }
-check "S11: the interrupted package was configured" bash -c "$(declare -f installed); mnt='$mnt'; installed half-done"
-check "S11: the dead source was reported, not fatal" grep -q 'apt-get update reported errors' "$W/s11.log"
 if [[ -n ${holder:-} ]]; then
 	check "S11: it waited for the dpkg lock ($((SECONDS - t0)) s)" test $((SECONDS - t0)) -ge 30
 fi
 unset holder
+# part-done dpkg work is never the migration's to finish: it waits, saying what to run
+check "S11: half-done left as it is, the renames waiting, saying why" bash -c "$(declare -f installed); mnt='$mnt'; ! installed half-done && grep -q \"part-done: *half-done.*dpkg --configure -a\" '$W/s11.log' && test -e '$mnt$S/migrate-pending'"
+# once the owner has finished it, the next run does the renames
+in_root dpkg --configure -a > "$W/s11b.log" 2>&1
+in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s11.log" 2>&1
+check "S11: then the migration succeeds" grep -q 'done: the board reads' "$W/s11.log"
+grep -q 'done: the board reads' "$W/s11.log" ||
+	{ echo "   -- the migration's last lines:"; tail -n 20 "$W/s11.log" | sed 's/^/   | /'; }
+check "S11: the dead source was reported, not fatal" grep -q 'apt-get update reported errors' "$W/s11.log"
 cleanup
 
 echo "== S12: armhf's renamed kernel meta-package: never installed by the migration"
@@ -837,22 +833,29 @@ chmod 755 "$d/DEBIAN/postinst"
 dpkg-deb --root-owner-group -b "$d" "$mnt/tmp/owner-broken.deb" >/dev/null
 in_root dpkg -i /tmp/owner-broken.deb > "$W/s55a.log" 2>&1
 check "S55: the precondition: owner-broken half-configured, its postinst run once" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' owner-broken | grep -qx half-configured && [ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ]"
-# and a record an earlier run of the migration's left (one that failed before dpkg ran, say): it lists only ours
-left_by_us libre-computer-gpio
 migrate s55.log
 check "S55: the migration did not configure it (its postinst not run again); the renames wait, saying why" bash -c "[ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ] && grep -q 'part-done: *owner-broken' '$W/s55.log' && test -e '$mnt$S/migrate-pending'"
 migrate s55b.log
-check "S55: a second run neither (the record is not a licence)" bash -c "[ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ]"
+check "S55: a second run neither" bash -c "[ \"\$(wc -l < '$mnt/var/tmp/owner-broken.count')\" = 1 ]"
 cleanup
 
-echo "== S56: a package an apt run of the migration's left unpacked (listed in its unfinished record): the next run configures it"
+echo "== S56: a rename a power loss cut short in dpkg (the old name removed, the new one unpacked): waits for dpkg's owner, then resumes"
 setup
 install_keyring
-dummy lc-left
-in_root dpkg --unpack /tmp/lc-left.deb > "$W/s56a.log" 2>&1
-left_by_us lc-left
+cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+in_root apt-mark auto libretech-gpio >/dev/null 2>&1
+in_root apt-get -q update > "$W/s56a.log" 2>&1
+(cd "$mnt/tmp" && chroot "$mnt" sh -c 'cd /tmp && apt-get -q download libre-computer-gpio') >> "$W/s56a.log" 2>&1
+# what the cut-short run left: its record, the old names removed, the new one unpacked and never configured
+echo auto > "$mnt$S/pending-libre-computer-gpio"
+in_root env DEBIAN_FRONTEND=noninteractive dpkg -r libretech-dtoverlay libretech-gpio >> "$W/s56a.log" 2>&1
+in_root sh -c 'dpkg --unpack /tmp/libre-computer-gpio_*.deb' >> "$W/s56a.log" 2>&1
+check "S56: the precondition: libre-computer-gpio unpacked, libretech-gpio gone" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libre-computer-gpio | grep -qx unpacked"
 migrate s56.log
-check "S56: lc-left configured, the record gone (nothing on it part-done)" bash -c "$(declare -f installed); mnt='$mnt'; installed lc-left && test ! -e '$mnt$S/unfinished'"
+check "S56: not configured by the migration, which waits saying what to run" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libre-computer-gpio | grep -qx unpacked && grep -q 'dpkg --configure -a' '$W/s56.log' && test -e '$mnt$S/migrate-pending'"
+in_root dpkg --configure -a > "$W/s56b.log" 2>&1
+migrate s56c.log
+check "S56: once dpkg is whole, the rename finishes: libre-computer-gpio in and automatic, the record gone" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-gpio && chroot '$mnt' apt-mark showauto | grep -qx libre-computer-gpio && test ! -e '$mnt$S/pending-libre-computer-gpio'"
 cleanup
 
 echo "== S57: the board's own entry written with a doubled slash in its path is its own entry"
@@ -885,14 +888,14 @@ migrate s59.log
 check "S59: libre-computer-gpio installed and automatic, the record gone" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-gpio && chroot '$mnt' apt-mark showauto | grep -qx libre-computer-gpio && test ! -e '$mnt$S/pending-libre-computer-gpio'"
 cleanup
 
-echo "== S60: dpkg left interrupted by someone else: the migration neither configures it nor takes it for its own"
+echo "== S60: a dpkg run cut short (its journal has entries): the migration leaves it, waits, and says what to run"
 setup
 install_keyring
 # an interrupted dpkg: an entry in its journal
 mkdir -p "$mnt/var/lib/dpkg/updates"
 : > "$mnt/var/lib/dpkg/updates/0000"
 migrate s60.log
-check "S60: no unfinished mark, the journal left as it was" bash -c "test ! -e '$mnt$S/unfinished' && test -e '$mnt/var/lib/dpkg/updates/0000'"
+check "S60: the journal left as it was, the renames waiting, saying why" bash -c "test -e '$mnt/var/lib/dpkg/updates/0000' && grep -q 'journal has entries.*dpkg --configure -a' '$W/s60.log' && test -e '$mnt$S/migrate-pending'"
 rm -f "$mnt/var/lib/dpkg/updates/0000"
 cleanup
 
@@ -930,32 +933,20 @@ in_root dpkg --no-triggers -i /tmp/trig-act.deb >> "$W/s63a.log" 2>&1
 check "S63: the precondition: trig-int triggers-pending" bash -c "chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' trig-int | grep -qx triggers-pending"
 migrate s63.log
 check "S63: the migration finishes (trig-int not taken for a part-done package of someone else's)" grep -q 'done: the board reads' "$W/s63.log"
-check "S63: and leaves no unfinished record (nothing of its runs part-done)" test ! -e "$mnt$S/unfinished"
 cleanup
 
-echo "== S64: a power loss in a run of ours while dpkg removed an old name: its journal is folded, the migration finishes"
+echo "== S64: a power loss while dpkg removed an old name: the migration waits for the journal, then takes the old name out itself"
 setup
 install_keyring
-# what the cut-short removal left: the old name half-installed in dpkg's journal, recorded as ours
+# what the cut-short removal left: the old name half-installed in dpkg's journal
 mkdir -p "$mnt/var/lib/dpkg/updates"
 chroot "$mnt" dpkg-query -s libretech-gpio | sed 's/^Status: .*/Status: install ok half-installed/' > "$mnt/var/lib/dpkg/updates/0000"
-left_by_us libretech-gpio
 migrate s64.log
-check "S64: the journal folded, libre-computer-gpio in, libretech-gpio gone, done" bash -c "$(declare -f installed); mnt='$mnt'; test -z \"\$(ls -A '$mnt/var/lib/dpkg/updates')\" && installed libre-computer-gpio && ! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-gpio 2>/dev/null | grep -qvx 'not-installed\|config-files' && grep -q 'done: the board reads' '$W/s64.log'"
-cleanup
-
-echo "== S65: dpkg ran since the run of ours that left a package part-done: no longer provably ours, not configured"
-setup
-install_keyring
-dummy lc-left
-in_root dpkg --unpack /tmp/lc-left.deb > "$W/s65a.log" 2>&1
-left_by_us lc-left
-# someone else's dpkg run since (a second later, so dpkg's state stamp moves)
-sleep 1
-dummy other-pkg
-in_root dpkg -i /tmp/other-pkg.deb >> "$W/s65a.log" 2>&1
-migrate s65.log
-check "S65: lc-left not configured, the record dropped, saying why" bash -c "! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' lc-left | grep -qx installed && test ! -e '$mnt$S/unfinished' && grep -q 'not provably' '$W/s65.log'"
+check "S64: the journal left, the renames waiting, saying what to run" bash -c "test -n \"\$(ls -A '$mnt/var/lib/dpkg/updates')\" && grep -q 'dpkg --configure -a' '$W/s64.log' && test -e '$mnt$S/migrate-pending'"
+# the owner's dpkg --configure -a folds the journal (it cannot finish the half-installed old name)
+in_root dpkg --configure -a > "$W/s64b.log" 2>&1
+migrate s64c.log
+check "S64: then libre-computer-gpio in, libretech-gpio gone (the rename's run removing it), done" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-gpio && ! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-gpio 2>/dev/null | grep -qvx 'not-installed\|config-files' && grep -q 'done: the board reads' '$W/s64c.log'"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"

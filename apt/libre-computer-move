@@ -242,6 +242,8 @@ newtmp() { # PATH [name]: tmp set to a fresh name beside PATH, listed, then crea
 	# created, for cp -P to make)
 	tmp=$(mktemp -u "$1.libre-computer-move.XXXXXX")
 	printf '%s\n' "$tmp" >> "$TEMPS"
+	# (the list on disk before the file exists)
+	sync "$TEMPS" 2>/dev/null || sync
 	[ "${2:-}" = name ] || (set -C; : > "$tmp")
 }
 if [ -s "$TEMPS" ]; then
@@ -299,7 +301,8 @@ for f in "$SL" "$SP"/*.list "$SP"/*.sources; do
 	# only a file apt reads: it skips a name with any character outside letters, digits, _ - . : (so no
 	# name with a space reaches the loops below)
 	case ${f##*/} in *[!A-Za-z0-9_.:-]*) continue ;; esac
-	[ "$(count new "$f")" -eq 0 ] || { has_new=1; newfiles="$newfiles $f"; }
+	# (a count awk could not make, e.g. of a file root cannot read, counts as none)
+	if [ "$(count new "$f")" -gt 0 ] 2>/dev/null; then has_new=1; newfiles="$newfiles $f"; fi
 	[ "$(count ours "$f")" -gt 0 ] || continue
 	old="$old $f"
 done
@@ -494,6 +497,9 @@ if [ $has_new = 0 ]; then
 		: > "$C/backup"
 		echo none > "$C/kind"
 	fi
+	# the record and the new file's content on disk before the rename: a power loss must find the one or the
+	# other whole, never an empty file under the source's name
+	sync "$C/before.log" "$C/path" "$C/backup" "$C/kind" "$C" "$tmp" 2>/dev/null || sync
 	mv -T "$tmp" "$real_src"
 	tmp=""
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
@@ -505,8 +511,16 @@ if [ $has_new = 0 ]; then
 fi
 
 # 2. the migration pending and its timer enabled, before the old entries go: an interruption from here
-# leaves both sources (apt reads both) and the migration still runs
+# leaves both sources (apt reads both) and the migration still runs. The new source and these marks on disk
+# first (its directory too: the rename that put it there), so a power loss after the old entries go cannot
+# leave the board with neither
 touch "$STATE/migrate-pending" "$STATE/moved"
+ns=${real_src:-$SRC}
+if [ $has_new = 0 ]; then
+	sync "$ns" "${ns%/*}" "$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
+else
+	sync "$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
+fi
 
 # 3. the deb.libre.computer entries out
 for f in $old; do

@@ -4,8 +4,8 @@
 #
 # apt runs it after its final plan, holding its locks, before it calls dpkg; a failure stops the run with
 # nothing changed. It refuses a run that would remove any package not in LC_RENAME_ALLOW (space-separated
-# names), or that would finish (apt's closing configure) a package someone else left part-done: the migration
-# checks both before the run, but another apt can change the board between that check and the run. apt hands it the actions on stdin (protocol version 2: a "VERSION 2" line, the
+# names), or that would finish (apt's closing configure) a package dpkg holds part-done: the migration checks
+# both before the run, but another apt can change the board between that check and the run. apt hands it the actions on stdin (protocol version 2: a "VERSION 2" line, the
 # configuration, a blank line, then one line per package whose last field is **REMOVE** for a removal). Any
 # other input, a version 1 list of .deb files with no removals in it included, is refused too.
 set -eu
@@ -16,26 +16,27 @@ if [ "$v" != "VERSION 2" ]; then
 fi
 # the configuration, up to the blank line
 while IFS= read -r l; do [ -n "$l" ] || break; done
-bad=""
+bad="" removed=" "
 while read -r pkg rest; do
 	case $rest in *"**REMOVE**") ;; *) continue ;; esac
 	pkg=${pkg%%:*}
+	removed="$removed$pkg "
 	case " ${LC_RENAME_ALLOW:-} " in *" $pkg "*) ;; *) bad="$bad $pkg" ;; esac
 done
 if [ -n "$bad" ]; then
 	echo "libre-computer-rename-guard: this run would also remove$bad; refusing (nothing changed)" >&2
 	exit 1
 fi
-# and no package someone else left part-done (unpacked, half-installed, half-configured; one only awaiting
-# triggers is not: dpkg processes triggers in any configure run, deciding nothing):
-# apt's closing dpkg --configure --pending would configure it. LC_RENAME_OURS: the names the migration counts as
-# its own (space-separated); without it, every part-done package refuses the run
-others=$(dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' 2>/dev/null |
-	awk -v ours=" ${LC_RENAME_OURS:-} " '
+# and dpkg whole: no package part-done (unpacked, half-installed, half-configured; one only awaiting triggers is
+# not: dpkg processes triggers in any configure run, deciding nothing), which apt's closing dpkg --configure
+# --pending would finish, but the ones this run removes (a removal configures nothing) and those in
+# LC_RENAME_EXCEPT (space-separated: the keyring the migration's own swap deconfigures)
+pd=$(dpkg-query -W -f '${db:Status-Status} ${binary:Package}\n' 2>/dev/null |
+	awk -v ex="$removed${LC_RENAME_EXCEPT:-} " '
 		$1 != "unpacked" && $1 != "half-installed" && $1 != "half-configured" { next }
-		{ n = $2; sub(/:.*/, "", n); if (index(ours, " " n " ") == 0) printf " %s", $2 }')
-if [ -n "$others" ]; then
-	echo "libre-computer-rename-guard: dpkg holds packages part-done that are not the migration's:$others; refusing (nothing changed)" >&2
+		{ n = $2; sub(/:.*/, "", n); if (index(ex, " " n " ") == 0) printf " %s", $2 }')
+if [ -n "$pd" ]; then
+	echo "libre-computer-rename-guard: dpkg holds packages part-done:$pd; refusing (nothing changed)" >&2
 	exit 1
 fi
 exit 0

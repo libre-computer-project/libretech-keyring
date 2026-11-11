@@ -30,7 +30,11 @@ boot and every 6 hours until it succeeds (a timer, so no boot target waits on ap
 `libre-computer-gpio`, …; each new package Breaks, Replaces and Provides its old name) and removes nothing else:
 it reads apt's plan first and refuses a step that would remove any other package, and the same check runs again
 inside apt's run (a `DPkg::Pre-Install-Pkgs` hook, before dpkg is called), in case another apt changed the board
-in between. It installs no kernel: the
+in between. It never finishes part-done dpkg work, whoever left it: while dpkg holds a package unpacked or
+half-configured, or a cut-short dpkg run left its journal, the renames wait and say so, for `dpkg --configure -a`
+(or `apt-get -f install`); a rename a power loss cut short is then resumed. The keyring itself is swapped by dpkg
+(`libre-computer-archive-keyring` unpacked over `libretech-keyring`), so its key and the migration's own scripts
+are never absent. It installs no kernel: the
 armhf meta-package's new name (`linux-image-lc-lts-arm` → `-armhf`) comes with the owner's own upgrade, through
 the transitional package, and the timer's next run then removes the old name (each new name keeps its old name's
 manual or automatic mark, so autoremove never takes it). Removing the keyring package stops and disables the timer;
