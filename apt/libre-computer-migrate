@@ -28,9 +28,8 @@ export LC_ALL=C
 # and no Suggests (a board may set Install-Suggests): a rename adds nothing the board did not have
 APT="apt-get -q -y -o APT::Get::AutomaticRemove=false -o APT::Install-Suggests=false -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef"
 W=$(mktemp -d)
-# the "renaming" mark while this runs: the old package's postrm keeps the timer and the state for the rename
-mkdir -p "$STATE"
-touch "$STATE/renaming"
+# the "renaming" mark is held only while an apt run of the renames is under way (safe_apt): the old package's
+# postrm then keeps the timer and the state for the rename; any other time, a removal is the owner's
 trap 'rm -rf "$W"; rm -f "$STATE/renaming"' EXIT
 # a stop (shutdown) while apt or dpkg runs: the shell runs this once that command has finished, so dpkg is
 # never left half-done by us (the unit's KillMode=process signals this script alone)
@@ -92,8 +91,11 @@ safe_apt() {
 			say "'apt-get $*' would also remove$bad; not done, nothing changed (will retry)"
 			return 1
 		fi
+		mkdir -p "$STATE"
+		touch "$STATE/renaming"
 		# shellcheck disable=SC2086
-		if $APT "$@" >"$W/out" 2>&1; then cat "$W/out"; return 0; fi
+		if $APT "$@" >"$W/out" 2>&1; then rm -f "$STATE/renaming"; cat "$W/out"; return 0; fi
+		rm -f "$STATE/renaming"
 		if is_locked && [ $si -lt 240 ]; then
 			si=$((si + 1))
 			sleep 30

@@ -320,10 +320,11 @@ if [ $has_new = 1 ]; then
 		-o Dir::State::Lists="$T/ownlists" -o Dir::Cache="$T/owncache" update >"$T/own.log" 2>&1 || true
 	# the InRelease, and main for this board's architecture (an entry with only non-free, or for another
 	# architecture, would leave nothing serving the renamed packages)
-	want=$(printf '%s' "$URIN" | tr / _)_dists_${suite}
-	# (apt keeps the host's case in its list file names; want is folded: compared without case)
-	if ! ls "$T/ownlists/" 2>/dev/null | grep -qiF -- "${want}_InRelease" ||
-		! ls "$T/ownlists/" 2>/dev/null | grep -qiF -- "${want}_main_binary-${ARCH}_Packages"; then
+	# (apt keeps the host's case in its list file names, so compared without case; every slash is an underscore
+	# there, a doubled one too, so runs of them match; dots literal)
+	want=$(printf '%s' "$URIN" | sed 's/[.]/[.]/g; s#/#_+#g')_+dists_${suite}
+	if ! ls "$T/ownlists/" 2>/dev/null | grep -qiE -- "${want}_InRelease" ||
+		! ls "$T/ownlists/" 2>/dev/null | grep -qiE -- "${want}_main_binary-${ARCH}_Packages"; then
 		say "the board's own entry for packages.libre.computer is not usable (its key, or the network); staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
 		grep -E '^(E|W|Err):' "$T/own.log" | sed 's/^/  /' || true
 		mkdir -p "$STATE"
@@ -395,7 +396,10 @@ if [ $has_new = 0 ]; then
 	apt-get -q -o Dir::Cache="$T/icache" indextargets >/dev/null 2>"$T/after.log" || true
 	if ! cmp -s "$T/before.log" "$T/after.log" && grep -q '^E:' "$T/after.log"; then
 		if [ -n "$src_backup" ]; then
-			cp -p "$src_backup" "$real_src"
+			tmp=$(mktemp "$real_src.lc-XXXXXX")
+			cp -p "$src_backup" "$tmp"
+			mv -T "$tmp" "$real_src"
+			tmp=""
 		elif [ -n "$src_link" ]; then
 			tmp=$(mktemp -u "$SRC.lc-XXXXXX")
 			cp -P "$src_link" "$tmp"
