@@ -110,5 +110,6 @@ install -m 0755 "$HERE/debian/libre-computer-archive-keyring.postrm" "$P/DEBIAN/
 # the #DEBHELPER# marker debhelper fills in has nothing to add here
 sed -i '/^#DEBHELPER#$/d' "$P/DEBIAN/postinst" "$P/DEBIAN/postrm"
 deb=$out/libretech-keyring_${version}~deb.libre.computer_all.deb
-dpkg-deb --root-owner-group -b "$P" "$deb" >/dev/null
+# xz: every dpkg a board may run unpacks it (an Ubuntu build host would default to zstd, which old dpkg cannot)
+dpkg-deb --root-owner-group -Zxz -b "$P" "$deb" >/dev/null
 echo "$deb"

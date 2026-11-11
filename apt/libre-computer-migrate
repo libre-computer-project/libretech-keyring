@@ -54,11 +54,11 @@ is_locked() { grep -qiE 'could not get lock|lock (was|is) locked by|database is 
 # run CMD..., output in $W/out, retrying every 30 s for up to 2 h while a lock is held (the apt run that
 # installed this package may still be going, with a kernel and its initramfs)
 wait_lock() {
-	i=0
+	wi=0
 	while :; do
 		if "$@" >"$W/out" 2>&1; then return 0; fi
-		is_locked && [ $i -lt 240 ] || return 1
-		i=$((i + 1))
+		is_locked && [ $wi -lt 240 ] || return 1
+		wi=$((wi + 1))
 		sleep 30
 	done
 }
@@ -66,7 +66,7 @@ wait_lock() {
 # safe_apt ARGS: apt-get ARGS, only if its plan removes nothing but the names in $allow (set by the caller). The plan is read
 # again before every attempt: while a lock is held, another apt may change what this one would do
 safe_apt() {
-	i=0 replanned=0
+	si=0 replanned=0
 	while :; do
 		if ! $APT -s "$@" >"$W/plan" 2>&1; then
 			# another apt may have started since dpkg was free and left packages unpacked: wait for it, configure
@@ -91,8 +91,8 @@ safe_apt() {
 		fi
 		# shellcheck disable=SC2086
 		if $APT "$@" >"$W/out" 2>&1; then cat "$W/out"; return 0; fi
-		if is_locked && [ $i -lt 240 ]; then
-			i=$((i + 1))
+		if is_locked && [ $si -lt 240 ]; then
+			si=$((si + 1))
 			sleep 30
 			continue
 		fi
@@ -125,9 +125,14 @@ keep_mark() {
 		[ "$(st "$n")" = installed ] || continue
 		case $autos in *" $o "*) m=auto ;; *) m=manual ;; esac
 		case $newmanual in *" $n "*) m=manual ;; esac
-		if ! wait_lock apt-mark "$m" "$n"; then
+		# a mark an earlier run could not set (apt had marked the new name manual meanwhile)
+		[ ! -s "$STATE/mark-$n" ] || m=$(cat "$STATE/mark-$n")
+		if wait_lock apt-mark "$m" "$n"; then
+			rm -f "$STATE/mark-$n"
+		else
 			say "could not mark $n $m; keeping $o for now"
 			unmarked="$unmarked$o "
+			echo "$m" > "$STATE/mark-$n"
 		fi
 	done
 }
