@@ -16,6 +16,14 @@ set -eu
 STATE=/var/lib/libre-computer-archive-keyring
 failed=0 dpkg_broken=0
 say() { echo "libre-computer-migrate: $*"; }
+# state_here: the state directory is still there before this run writes into it again. The owner purging the
+# keyring while this run waits removes it (the postrm), and that purge is theirs: the run stops, leaving no
+# directory behind it
+state_here() {
+	[ -d "$STATE" ] && return 0
+	say "the keyring's state was removed meanwhile (the package purged); stopping"
+	exit 0
+}
 [ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || [ -e "$STATE/move-pending" ] || exit 0
 
 export DEBIAN_FRONTEND=noninteractive
@@ -154,7 +162,7 @@ idle_free() { wait_lock apt-get -q check && return 0; ! is_locked; }
 # boot), so a mark a power loss or a kill left is not a rename under way; "-" for a value it cannot read, as the
 # postrm reads them (the start time: the 20th field after the ") " that ends the command name in stat)
 run_begin() {
-	mkdir -p "$STATE"
+	state_here
 	bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
 	bst=$(sed 's/.*) //' "/proc/$$/stat" 2>/dev/null | cut -d' ' -f20 || true)
 	echo "${bid:--} $$ ${bst:--}" > "$STATE/renaming"
@@ -177,6 +185,7 @@ pending_spec() {
 	done
 }
 record_pending() {
+	state_here
 	pending_spec "$@" | while read -r qo qn qm; do
 		echo "$qm" > "$STATE/pending-$qn"
 		sync "$STATE/pending-$qn" "$STATE" 2>/dev/null || sync
@@ -329,6 +338,14 @@ keyring_swap() {
 	# (the old keyring still here: the owner may have removed it while this run waited, and that removal is theirs)
 	if ! pr libretech-keyring; then
 		say "libretech-keyring was removed meanwhile; not installing libre-computer-archive-keyring in its place"
+		return 1
+	fi
+	# nor held: apt refuses to remove a held package, but dpkg -i drops or deconfigures one another package's
+	# Replaces and Breaks name without asking. The owner's hold keeps the old keyring (a query that fails
+	# counts as a hold)
+	kw=$(dpkg-query -W -f '${db:Status-Want}\n' libretech-keyring 2>/dev/null) || kw=hold
+	if printf '%s\n' "$kw" | grep -qx hold; then
+		say "libretech-keyring is held (apt-mark hold); it stays, and so does its name, until the hold is lifted"
 		return 1
 	fi
 	record_pending libre-computer-archive-keyring
@@ -540,7 +557,7 @@ if [ -n "$kgone" ]; then
 	done
 fi
 if [ -n "$waiting" ]; then
-	mkdir -p "$STATE"
+	state_here
 	touch "$STATE/kernel-pending"
 	sync "$STATE/kernel-pending" "$STATE" 2>/dev/null || sync
 	say "the kernel's new names come with your next 'apt upgrade';$waiting stay until then"

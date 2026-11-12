@@ -4,7 +4,8 @@
 #
 # apt runs it after its final plan and the downloads, holding its locks, before it calls dpkg; a failure stops
 # the run with nothing changed. It refuses a run that would remove any package not in LC_RENAME_ALLOW
-# (space-separated names), or that would finish (apt's closing configure) a package dpkg holds part-done: the
+# (space-separated names) -- apt's listed removals, and those dpkg would make unlisted (an unpacked package's
+# Replaces covering one on the board that the run neither removes nor unpacks) --, or that would finish (apt's closing configure) a package dpkg holds part-done: the
 # migration checks both before the run, but another apt can change the board between that check and the run.
 # apt hands it the actions on stdin (protocol version 2: a "VERSION 2" line, the configuration, a blank line,
 # then one line per package whose last field is **REMOVE** for a removal). Any other input, a version 1 list of
@@ -23,17 +24,57 @@ if [ "$v" != "VERSION 2" ]; then
 fi
 # the configuration, up to the blank line
 while IFS= read -r l; do [ -n "$l" ] || break; done
-bad="" removed=" "
-while read -r pkg rest; do
-	case $rest in *"**REMOVE**") ;; *) continue ;; esac
+bad="" removed=" " unpacking=" " debs=""
+# a line: package, old version, direction, new version, then the .deb unpacked, **CONFIGURE** or **REMOVE**
+while read -r pkg _ov _dir _nv act; do
 	pkg=${pkg%%:*}
-	removed="$removed$pkg "
-	case " ${LC_RENAME_ALLOW:-} " in *" $pkg "*) ;; *) bad="$bad $pkg" ;; esac
+	case $act in
+		"**REMOVE**")
+			removed="$removed$pkg "
+			case " ${LC_RENAME_ALLOW:-} " in *" $pkg "*) ;; *) bad="$bad $pkg" ;; esac ;;
+		*.deb)
+			unpacking="$unpacking$pkg "
+			debs="$debs$act
+" ;;
+	esac
 done
 if [ -n "$bad" ]; then
 	echo "libre-computer-rename-guard: this run would also remove$bad; refusing (nothing changed)" >&2
 	exit 1
 fi
+# nor any removal apt does not list: dpkg itself drops an installed package whose every file a package it unpacks
+# takes over (that one's Replaces), and apt's plan never shows it. Refused: a package unpacked here whose Replaces
+# names one on the board that this run neither removes nor unpacks, at a version the Replaces covers (the old
+# names, which the migration's own packages replace, are allowed). A .deb that cannot be read: refused
+present_ver() { # NAME: the version of any architecture of NAME on the board, in a state but removed
+	dpkg-query -W -f '${db:Status-Status} ${Version}\n' "$1" 2>/dev/null |
+		awk '$1 != "not-installed" && $1 != "config-files" { print $2; exit }'
+}
+printf '%s' "$debs" | while IFS= read -r deb; do
+	[ -n "$deb" ] || continue
+	if ! dp=$(dpkg-deb -f "$deb" Package 2>/dev/null) || ! rp=$(dpkg-deb -f "$deb" Replaces 2>/dev/null); then
+		echo "libre-computer-rename-guard: cannot read $deb; refusing (nothing changed)" >&2
+		exit 1
+	fi
+	printf '%s\n' "$rp" | tr ',' '\n' | while IFS= read -r re; do
+		# an entry: NAME[:ARCH] [(OP VER)], spaces optional
+		rn=$(printf '%s' "$re" | sed 's/[[:space:]]//g; s/(.*//; s/:.*//')
+		[ -n "$rn" ] && [ "$rn" != "$dp" ] || continue
+		case " ${LC_RENAME_ALLOW:-} $removed $unpacking " in *" $rn "*) continue ;; esac
+		iv=$(present_ver "$rn")
+		[ -n "$iv" ] || continue
+		# a version constraint: only a version it covers is replaced (dpkg failing to compare: covered)
+		case $re in
+			*"("*)
+				rop=$(printf '%s' "$re" | sed 's/.*(//; s/).*//; s/[[:space:]]//g; s/^\([<>=]*\).*/\1/')
+				rv=$(printf '%s' "$re" | sed 's/.*(//; s/).*//; s/[[:space:]]//g; s/^[<>=]*//')
+				dpkg --compare-versions "$iv" "$rop" "$rv" 2>/dev/null && cv=0 || cv=$?
+				[ "$cv" != 1 ] || continue ;;
+		esac
+		echo "libre-computer-rename-guard: $dp would replace $rn, which this run does not remove, and dpkg could drop it unasked; refusing (nothing changed; your next 'apt upgrade' lets the rename through)" >&2
+		exit 1
+	done || exit 1
+done || exit 1
 # and dpkg whole: no package part-done (unpacked, half-installed, half-configured; one only awaiting triggers is
 # not: dpkg processes triggers in any configure run, deciding nothing), which apt's closing dpkg --configure
 # --pending would finish, but the ones this run removes (a removal configures nothing) and those in

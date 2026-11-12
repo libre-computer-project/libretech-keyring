@@ -308,11 +308,15 @@ say_unreadable() { # LOG
 	grep -E '^(E|W):' "$1" | sed 's/^/  /' || true
 }
 unreadable() { # LOG: say so, and the previous source back (its copy, now the file again, not kept twice)
-	undo_src "$(cat "$C/kind")" "$(cat "$C/backup")" "$(cat "$C/path")"
-	[ ! -s "$C/backup" ] || rm -f "$(cat "$C/backup")"
+	ub=$(cat "$C/backup")
+	undo_src "$(cat "$C/kind")" "$ub" "$(cat "$C/path")"
 	# (step 1 undone: nothing moved, so no "moving" for a later run to finish)
 	rm -f "$STATE/moving"
+	# the record before the backup it names, on disk first: a power loss between the two never leaves a
+	# record whose backup is gone (the next run's undo would have nothing to copy back)
 	rm -rf "$C"
+	sync "$STATE" 2>/dev/null || sync
+	[ -z "$ub" ] || rm -f "$ub"
 	say_unreadable "$1"
 	exit 0
 }

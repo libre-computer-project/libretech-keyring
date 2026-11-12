@@ -1016,5 +1016,28 @@ install_keyring
 check "S71: moved, the migration pending" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending' && ! grep -q 'is not systemd' '$W/dpkg.log'"
 cleanup
 
+echo "== S72: the owner holds the self-contained libretech-keyring: the migration leaves it (and its name) in place"
+deblibre_repo "$deblibre_keyring"
+setup_deblibre
+upgrade
+in_root apt-mark hold libretech-keyring > "$W/s72-hold.log" 2>&1
+migrate s72.log
+check "S72: libretech-keyring kept, libre-computer-archive-keyring not swapped in, and said why" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-keyring && ! installed libre-computer-archive-keyring && grep -q 'libretech-keyring is held' '$W/s72.log'"
+check "S72: the migration stays pending" test -e "$mnt$S/migrate-pending"
+cleanup
+
+echo "== S73: the guard refuses an unpack whose Replaces covers a package on the board that the run does not remove"
+setup
+install_keyring
+dummy owner-thing
+in_root dpkg -i /tmp/owner-thing.deb > "$W/s73.log" 2>&1
+dummy zz-replacer "Replaces: owner-thing"
+guarded " " install /tmp/zz-replacer.deb
+check "S73: refused, nothing changed" bash -c "$(declare -f installed); mnt='$mnt'; installed owner-thing && ! installed zz-replacer && grep -q 'rename-guard: zz-replacer would replace owner-thing' '$W/s54.log'"
+dummy zz-replacer "Replaces: owner-thing (<< 0.5)"
+guarded " " install /tmp/zz-replacer.deb
+check "S73: a Replaces whose version does not cover the one on the board: let through" bash -c "$(declare -f installed); mnt='$mnt'; installed owner-thing && installed zz-replacer"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
