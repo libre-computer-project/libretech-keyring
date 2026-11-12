@@ -1050,5 +1050,15 @@ in_root env LC_MOVE_FROM_MIGRATE=1 LC_PACKAGES_URI=file:///srv/unreachable sh /t
 check "S74: no state directory re-created, and said why" bash -c "test ! -e '$mnt$S' && grep -q 'removed meanwhile' '$W/s74.log'"
 cleanup
 
+echo "== S75: a dpkg-reconfigure's move (no dpkg lock) after the keyring was removed: it stops, writing nothing"
+setup
+in_root apt-get -q update > "$W/s75.log" 2>&1 || true
+rm -f "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+in_root env DEBCONF_RECONFIGURE=1 DPKG_MAINTSCRIPT_PACKAGE=libre-computer-archive-keyring LC_PACKAGES_URI=file:///srv/test-repo \
+	sh /tmp/lc-move >> "$W/s75.log" 2>&1
+check "S75: no state, no new source, deb.libre.computer kept, and said why" bash -c "test ! -e '$mnt$S' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && grep -q 'removed meanwhile' '$W/s75.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

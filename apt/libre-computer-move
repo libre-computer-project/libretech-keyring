@@ -35,13 +35,20 @@ if [ -z "$PKG" ]; then
 		PKG=libre-computer-archive-keyring
 fi
 say() { echo "libre-computer-archive-keyring: $*"; }
-# still_ours: run by the migration (LC_MOVE_FROM_MIGRATE), the keyring's state and key are still there before
-# this run writes into the state or the sources. The move holds no dpkg lock (its probe, a network fetch, can
-# take minutes), so the owner may remove or purge the keyring meanwhile; that removal is theirs, and the move
-# stops there, re-creating nothing. (From the postinst, dpkg holds its lock: nothing can remove the package)
+# still_ours: the keyring still on the board before this run writes into the state or the sources. Run by the
+# migration (LC_MOVE_FROM_MIGRATE: its state and key there) or by dpkg-reconfigure (DEBCONF_RECONFIGURE: the
+# key there, the package installed), the move holds no dpkg lock -- its probe, a network fetch, can take
+# minutes, and it may wait for another move's lock -- so the owner may remove or purge the keyring meanwhile;
+# that removal is theirs, and the move stops there, re-creating nothing. (From the postinst of an install or
+# upgrade, dpkg holds its lock: nothing can remove the package)
 still_ours() {
-	[ -n "${LC_MOVE_FROM_MIGRATE:-}" ] || return 0
-	[ -d "$STATE" ] && [ -s "$KEY" ] && return 0
+	if [ -n "${LC_MOVE_FROM_MIGRATE:-}" ]; then
+		[ -d "$STATE" ] && [ -s "$KEY" ] && return 0
+	elif [ -n "${DEBCONF_RECONFIGURE:-}" ]; then
+		[ -s "$KEY" ] && [ "$(dpkg-query -W -f '${db:Status-Status}' "$PKG" 2>/dev/null)" = installed ] && return 0
+	else
+		return 0
+	fi
 	say "the keyring was removed meanwhile; stopping, nothing more changed"
 	exit 0
 }
@@ -260,6 +267,8 @@ still_ours
 mkdir -p "$STATE"
 exec 9>"$STATE/.move.lock"
 flock 9
+# (and again after the wait for another move)
+still_ours
 T="" tmp=""
 trap '[ -z "$T" ] || rm -rf "$T"; [ -z "$tmp" ] || rm -f "$tmp"' EXIT
 trap 'exit 1' INT TERM HUP
