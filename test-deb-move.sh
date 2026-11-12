@@ -1116,5 +1116,16 @@ in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s80.log"
 check "S80: no migration, the marks kept for a run under systemd, and said why" bash -c "test ! -e '$mnt$S/migrate-pending' && test -e '$mnt$S/move-pending' && test -e '$mnt$S/moving' && grep -q 'renames wait until the init is systemd' '$W/s80.log'"
 cleanup
 
+echo "== S81: step 2's marks left by a cut-short move whose source the owner then removed, the board staying: the marks go"
+setup
+dummy linux-image-lc-edge-arm64
+in_root dpkg -i /tmp/linux-image-lc-edge-arm64.deb > "$W/s81.log" 2>&1
+mkdir -p "$mnt$S"
+touch "$mnt$S/migrate-pending" "$mnt$S/moved" "$mnt$S/move-pending"
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move >> "$W/s81.log" 2>&1
+check "S81: stays, and no migration is left scheduled" bash -c "test ! -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/moved' && test ! -e '$mnt$S/move-pending' && grep -q 'kernel channel' '$W/s81.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

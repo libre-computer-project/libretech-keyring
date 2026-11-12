@@ -395,8 +395,17 @@ stay() {
 	else
 		say "$1; staying on deb.libre.computer"
 		retry_off
+		unmoved
 	fi
 	exit 0
+}
+# unmoved: a board that stays and reads no packages.libre.computer entry (has_new 0) has no migration to run: the
+# marks an earlier, cut-short move left (step 2's, its source since removed by the owner) go, synced, so no timer
+# runs a migration that cannot (its rename records stay, for the move that comes later)
+unmoved() {
+	[ $has_new = 0 ] || return 0
+	rm -f "$STATE/migrate-pending" "$STATE/moved" "$STATE/kernel-pending"
+	sync "$STATE" 2>/dev/null || sync
 }
 # "moving": step 1 below wrote the new source over libre-computer.sources (written, synced, before the rename;
 # gone once step 3 is done). A run stopped after that rename and before step 2's marks were on disk leaves a
@@ -446,12 +455,19 @@ case $init in
 		if [ $stepped = 1 ]; then
 			# (nothing is finished or scheduled here. "moving" and the retry mark stay: no timer runs without
 			# systemd, and once the init is systemd again the timer step 1 enabled runs the move, which finishes it)
-			say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: $SRC holds packages.libre.computer's source, and the renames wait until the init is systemd, when the move runs again and finishes. To stay on deb.libre.computer instead, remove $SRC and $STATE/move-pending"
+			if [ -n "$old" ]; then
+				say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: $SRC holds packages.libre.computer's source beside deb.libre.computer's entries, and the renames wait until the init is systemd, when the move runs again and finishes. To stay on deb.libre.computer instead, remove $SRC and $STATE/move-pending"
+			else
+				# (every deb.libre.computer entry was in $SRC: step 1 took them out, so removing $SRC would leave
+				# the board with no Libre Computer source; the originals are in moved-sources)
+				say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: $SRC is the board's only Libre Computer source now (deb.libre.computer's entries, which it held, are kept in $STATE/moved-sources), and the renames wait until the init is systemd, when the move runs again and finishes. To stay on deb.libre.computer instead, put $SRC back from $STATE/moved-sources and remove $STATE/move-pending"
+			fi
 			exit 0
 		fi
 		if [ -n "$old" ]; then
 			say "this board's init ($init) is not systemd, which runs the renames; staying on deb.libre.computer"
 			retry_off
+			unmoved
 			exit 0
 		fi ;;
 esac
