@@ -39,7 +39,9 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 # /etc/systemd, and a filesystem that does not keep metadata in order could otherwise keep a later change --
 # the old sources' removal -- and lose the link), and started now where systemd runs (--no-block)
 timer_on() {
-	systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+	# (offline, --root=/: the link written here, never by asking a running systemd -- in an image build with the
+	# build host's /run bound in and no /proc, systemd 252 cannot see the chroot and would ask the host's)
+	systemctl --root=/ enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 	sync /etc/systemd/system/timers.target.wants /etc/systemd/system 2>/dev/null || sync
 	! live_systemd || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 }

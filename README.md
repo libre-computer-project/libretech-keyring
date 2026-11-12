@@ -43,6 +43,20 @@ as a package's configuration does. Another release, a kernel channel other than 
 answering keeps the board where it is (operator, 2026-11-10), as does an init other than systemd (nothing would
 run the renames).
 
+**Known limits** (each a case no change can close without breaking another property):
+- A power loss that cuts a run renaming several packages short leaves records for the renames it had not begun;
+  the next run that finds no apt or dpkg lock held drops them. Until then, an owner who finishes dpkg and removes
+  one of those old names by hand will see the migration install its new name: no record written before an
+  action can tell the action apart from an owner's.
+- On a moved board whose keyring is not swapped yet (the time from the move to the migration's own swap: about
+  30 s, or about 5 min after a boot), the owner's own `apt upgrade` unpacks the transitional `libretech-keyring`
+  before `libre-computer-archive-keyring`, and a power loss between the two unpacks leaves the key missing until
+  `apt -f install`. `Pre-Depends` on the transitional would order them, but it makes apt remove the old keyring
+  first, which broke the rename when tried.
+- An image built in a container (not a chroot, `/proc` present, PID 1 not systemd) that adds its init after this
+  package stays on deb.libre.computer: it cannot be told from a running container without systemd, which must
+  stay. `dpkg-reconfigure libre-computer-archive-keyring` moves it once its init is in.
+
 **What deb.libre.computer gets**: `build-deblibre.sh` builds a self-contained `libretech-keyring`
 (`<date>~deb.libre.computer`: the key, the move and the migration, no new dependency). `apt-get upgrade` never
 installs a package the board lacks, so a `libretech-keyring` that Depended on `libre-computer-archive-keyring`

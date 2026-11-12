@@ -1,20 +1,24 @@
 #!/bin/sh
 set -e
+# live: this root's own systemd runs (a unit may be reloaded or started now): its runtime directory, a /proc, and
+# not a chroot. An image build never reaches a systemd, even with the build host's /run bound in (without /proc,
+# systemd before 253 cannot see a chroot)
+live() { [ -d /run/systemd/system ] && [ -e /proc/1/comm ] && ! systemd-detect-virt --chroot --quiet 2>/dev/null; }
 case "$1" in
 	configure)
 		# an upgrade may change the migration's unit files; with dh_systemd_start overridden nothing else
 		# reloads systemd (a reload starts nothing)
-		[ ! -d /run/systemd/system ] || systemctl daemon-reload >/dev/null 2>&1 || true
+		! live || systemctl daemon-reload >/dev/null 2>&1 || true
 		# pending work keeps its timer, whichever package this is and whatever removed the link (and stopped
-		# the timer) before: enabled, and started now rather than at the next boot (--no-block: a start never
-		# waits on the unit from inside apt)
+		# the timer) before: enabled (offline, --root=/: the link written here, never by a running systemd),
+		# and started now rather than at the next boot (--no-block: a start never waits on the unit from inside
+		# apt)
 		S=/var/lib/libre-computer-archive-keyring
 		if [ -e "$S/migrate-pending" ] || [ -e "$S/kernel-pending" ] || [ -e "$S/move-pending" ]; then
-			systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+			systemctl --root=/ enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 			# (the link on disk: nothing else syncs /etc/systemd)
 			sync /etc/systemd/system/timers.target.wants /etc/systemd/system 2>/dev/null || sync
-			[ ! -d /run/systemd/system ] ||
-				systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+			! live || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 		fi
 		# a board still on deb.libre.computer moves to packages.libre.computer; any other is untouched.
 		# A failure to move leaves the board on its old source and must not fail the keyring's install.

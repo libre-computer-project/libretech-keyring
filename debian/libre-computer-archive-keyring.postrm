@@ -29,7 +29,9 @@ case "$1" in
 			[ ! -e /usr/lib/systemd/system/libre-computer-migrate.timer ]; }; then
 			rm -f /etc/systemd/system/timers.target.wants/libre-computer-migrate.timer
 			# and the loaded timer stopped, so it does not keep starting a script that is gone
-			if [ -d /run/systemd/system ]; then
+			# (only this root's own running systemd: not from an image build, even with the build host's
+			# /run bound in)
+			if [ -d /run/systemd/system ] && [ -e /proc/1/comm ] && ! systemd-detect-virt --chroot --quiet 2>/dev/null; then
 				systemctl stop --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 				systemctl daemon-reload >/dev/null 2>&1 || true
 			fi
