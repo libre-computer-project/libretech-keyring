@@ -58,8 +58,10 @@ run the renames).
   stay. `dpkg-reconfigure libre-computer-archive-keyring` moves it once its init is in.
 - The suite the move writes into `libre-computer.sources` is the owner's to carry through a release upgrade, as
   every source of the board's is (the usual `sed` over `sources.list.d` does it): the move never rewrites a
-  suite it has written. A board upgraded between a move cut short and its next run keeps the old suite's stanza
-  until then, and gets the new release's stanza beside it if a deb.libre.computer entry is left elsewhere. Telling
+  suite it has written. A board upgraded to another release between a move cut short after its new source went
+  in and the next run keeps that old suite's stanza: with no deb.libre.computer entry left, the next run finishes
+  the move and the renames read the old suite; with one left elsewhere, the next run adds the new release's
+  stanza beside it (or, for a release packages.libre.computer does not serve, keeps both and says so). Telling
   the stanza the move wrote from one the owner added or edited since would take a record of its exact content,
   and replacing an owner's entry is the one thing the move must never do.
 

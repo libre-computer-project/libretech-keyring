@@ -381,6 +381,20 @@ for f in "$SL" "$SP"/*.list "$SP"/*.sources; do
 done
 # move-pending: a move the timer retries (packages.libre.computer was not usable at the last try)
 retry_off() { rm -f "$STATE/move-pending"; }
+# stay REASON: the board does not move, saying why, and exits. A move part-way ("stepped": step 1's source in
+# libre-computer.sources, deb.libre.computer's entries left elsewhere) keeps its retry mark: the board reads both
+# repositories, and the next run after the owner removes either settles it -- the deb.libre.computer entries
+# gone, step 2 is finished and the renames read the stanza step 1 wrote; libre-computer.sources gone, the mark is
+# dropped and the board is on deb.libre.computer again
+stay() {
+	if [ $stepped = 1 ]; then
+		say "$1; an earlier move, cut short, left packages.libre.computer's source in $SRC beside deb.libre.computer's entries. Both stay, checked again every 6 hours: removing $SRC keeps the board on deb.libre.computer, removing the deb.libre.computer entries finishes the move"
+	else
+		say "$1; staying on deb.libre.computer"
+		retry_off
+	fi
+	exit 0
+}
 # "moving": step 1 below wrote the new source over libre-computer.sources (written, synced, before the rename;
 # gone once step 3 is done). A run stopped after that rename and before step 2's marks were on disk leaves a
 # board with no deb.libre.computer entry left -- every one was in that file -- and nothing scheduled: so a run
@@ -412,17 +426,7 @@ if [ -z "$old" ] && [ $stepped = 1 ]; then
 fi
 [ -n "$old" ] || { retry_off; exit 0; }
 
-if [ -z "$suite" ]; then
-	if [ $stepped = 1 ]; then
-		# (a move part-way keeps its retry mark, as for another kernel channel: the board reads both repositories,
-		# and once either source goes the next run settles it -- step 2 finished, or the mark dropped)
-		say "this release (${ID:-unknown} ${VERSION_CODENAME:-unknown}) is not served by packages.libre.computer, and an earlier move, cut short, left its source beside deb.libre.computer's; both stay, and this is checked again every 6 hours (remove one of the two to settle it)"
-	else
-		say "this release (${ID:-unknown} ${VERSION_CODENAME:-unknown}) is not served by packages.libre.computer; staying on deb.libre.computer"
-		retry_off
-	fi
-	exit 0
-fi
+[ -n "$suite" ] || stay "this release (${ID:-unknown} ${VERSION_CODENAME:-unknown}) is not served by packages.libre.computer"
 
 # the renames are run by a systemd timer: a board whose init is not systemd (sysvinit-core, openrc) would be
 # moved with nothing ever to rename its packages, so it stays. Read from /sbin/init, not from a running
@@ -446,9 +450,7 @@ case $init in
 	*/systemd | none) ;;
 	*)
 		[ "$init" != none-and-no-systemd ] || init=none
-		say "this board's init ($init) is not systemd, which runs the renames; staying on deb.libre.computer"
-		[ $stepped = 1 ] || retry_off
-		exit 0 ;;
+		stay "this board's init ($init) is not systemd, which runs the renames" ;;
 esac
 
 # a kernel channel packages.libre.computer does not carry keeps the board on the frozen repo (its meta-package in
@@ -458,11 +460,8 @@ others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 
 	grep -E '^linux-image-lc-.+-(arm64|arm|armhf|amd64)$' |
 	grep -vE '^linux-image-lc-lts-(arm64|arm|armhf|amd64)$' || true)
 if [ -n "$others" ]; then
-	say "this board follows a kernel channel packages.libre.computer does not carry ($(echo $others)); staying on deb.libre.computer"
-	# (a move part-way -- step 1's new source in, "moving" -- keeps its retry mark: the board reads both
-	# repositories until the channel is lc-lts again and the move finishes, or the owner takes it back out)
-	[ $stepped = 1 ] || retry_off
-	exit 0
+	# (stepped: also until the channel is lc-lts again, when the move finishes)
+	stay "this board follows a kernel channel packages.libre.computer does not carry ($(echo $others))"
 fi
 
 # the board is to move: from here on, any failure (a full /tmp, a probe) leaves the mark the timer retries,

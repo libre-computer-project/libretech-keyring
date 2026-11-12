@@ -408,7 +408,7 @@ if [ -e "$STATE/move-pending" ]; then
 	# (the keyring removed during the move's probe: the move stopped, and so does this run)
 	state_here
 	if [ -e "$STATE/move-pending" ]; then
-		say "packages.libre.computer is still not usable from this board; will retry"
+		say "the move to packages.libre.computer is still pending (the move said why, above); will retry"
 		failed=1
 	fi
 	[ -e "$STATE/move-pending" ] || [ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || exit 0
@@ -418,6 +418,8 @@ fi
 # work is dpkg's owner's to finish, never this script's (see partdone); until it is, the renames wait
 free=0
 ! idle_free || free=1
+# (the wait can be long: the keyring removed meanwhile stops the run)
+state_here
 # a rename record whose old name is still here and new one not in is one a stop cut short before that rename's
 # removal (a run renaming several, cut short after some): it began nothing, and goes now, before the owner's
 # own apt runs can make its old name look taken by the rename (the window left is the time from boot to this
@@ -494,6 +496,7 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 		# holding a lock, as at the start)
 		free=0
 		! idle_free || free=1
+		state_here
 		for p in $pairs; do
 			o=${p%%:*} n=${p#*:}
 			[ $free = 0 ] || [ ! -e "$STATE/pending-$n" ] || ! never_began "$o" "$n" || rm -f "$STATE/pending-$n"
