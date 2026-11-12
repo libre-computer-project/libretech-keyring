@@ -116,6 +116,9 @@ setup() {
 		> "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
 }
 in_root() { chroot "$mnt" "$@"; }
+# the migration as the timer runs it, with the stand-in repository's URI: the keyring swap's postinst runs the move,
+# which must recognise the board's source (on a board it names the default URI)
+MIGRATE="env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo/test-key.gpg /usr/lib/libre-computer-archive-keyring/libre-computer-migrate"
 installed() { [[ "$(chroot "$mnt" dpkg-query -W -f '${db:Status-Status}' "$1" 2>/dev/null)" == installed ]]; }
 install_keyring() { # the two keyring packages, through apt as a board takes them (plain dpkg -i cannot
 	# order the swap: it refuses to unpack the new keyring while the old one is configured)
@@ -135,7 +138,7 @@ check "S1: the migration is pending, its retry timer enabled" bash -c "test -e '
 check "S1: no boot target waits on the migration (the service has no [Install])" bash -c "! grep -q '^\[Install\]' '$mnt/usr/lib/systemd/system/libre-computer-migrate.service' && test ! -e '$mnt/etc/systemd/system/multi-user.target.wants/libre-computer-migrate.service'"
 # the throwaway key in place of the shipped one, for this repository only
 cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
-in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/migrate.log" 2>&1
+in_root $MIGRATE> "$W/migrate.log" 2>&1
 check "S1: the migration succeeds" grep -q 'done: the board reads packages.libre.computer' "$W/migrate.log"
 for p in libre-computer-gpio libre-computer-dtoverlay alsa-ucm-conf-libre-computer xserver-xorg-core-libre-computer libre-computer-archive-keyring; do
 	check "S1: $p installed" bash -c "$(declare -f installed); mnt='$mnt'; installed $p"
@@ -146,7 +149,7 @@ done
 check "S1: a new package's Recommends is not installed" bash -c "$(declare -f installed); mnt='$mnt'; ! installed lc-test-recommended"
 check "S1: the key file is still in place (it changed package, not path)" test -s "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 check "S1: nothing pending, the timer disabled" bash -c "test ! -e '$mnt/var/lib/libre-computer-archive-keyring/migrate-pending' && test ! -e '$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer'"
-in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/migrate2.log" 2>&1
+in_root $MIGRATE> "$W/migrate2.log" 2>&1
 check "S1: a second run does nothing" bash -c "[[ ! -s '$W/migrate2.log' ]]"
 cleanup
 
@@ -223,7 +226,7 @@ check "S5: its install moved the board: packages.libre.computer's source in, deb
 check "S5: the migration is pending" test -e "$mnt/var/lib/libre-computer-archive-keyring/migrate-pending"
 # the package put the real key back; the stand-in repositories are signed by the throwaway one
 cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
-in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/migrate5.log" 2>&1
+in_root $MIGRATE> "$W/migrate5.log" 2>&1
 check "S5: the migration succeeds" grep -q 'done: the board reads packages.libre.computer' "$W/migrate5.log"
 grep -q 'done: the board reads packages.libre.computer' "$W/migrate5.log" ||
 	{ echo "   -- the migration's last lines:"; tail -n 25 "$W/migrate5.log" | sed 's/^/   | /'; }
@@ -248,7 +251,8 @@ S=/var/lib/libre-computer-archive-keyring
 migrate() { # LOG: the throwaway key in place, then the migration
 	cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 	# bounded: a migration that loops fails its checks instead of hanging the test
-	timeout --kill-after=30 900 chroot "$mnt" /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/$1" 2>&1
+	# shellcheck disable=SC2086
+	timeout --kill-after=30 900 chroot "$mnt" $MIGRATE > "$W/$1" 2>&1
 }
 dummy() { # NAME [CONTROL-LINE]: a local package built into the chroot's /tmp
 	local d=$W/pkg-$1
@@ -329,7 +333,7 @@ if [[ -x $mnt/usr/bin/python3 ]]; then
 	sleep 2
 fi
 t0=$SECONDS
-in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s11.log" 2>&1
+in_root $MIGRATE> "$W/s11.log" 2>&1
 [[ -z ${holder:-} ]] || wait "$holder"
 if [[ -n ${holder:-} ]]; then
 	check "S11: it waited for the dpkg lock ($((SECONDS - t0)) s)" test $((SECONDS - t0)) -ge 30
@@ -339,7 +343,7 @@ unset holder
 check "S11: half-done left as it is, the renames waiting, saying why" bash -c "$(declare -f installed); mnt='$mnt'; ! installed half-done && grep -q \"part-done: *half-done.*dpkg --configure -a\" '$W/s11.log' && test -e '$mnt$S/migrate-pending'"
 # once the owner has finished it, the next run does the renames
 in_root dpkg --configure -a > "$W/s11b.log" 2>&1
-in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s11.log" 2>&1
+in_root $MIGRATE> "$W/s11.log" 2>&1
 check "S11: then the migration succeeds" grep -q 'done: the board reads' "$W/s11.log"
 grep -q 'done: the board reads' "$W/s11.log" ||
 	{ echo "   -- the migration's last lines:"; tail -n 20 "$W/s11.log" | sed 's/^/   | /'; }
@@ -480,7 +484,7 @@ reindex
 upgrade
 cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 in_root apt-mark hold libretech-alsa-ucm-conf >/dev/null 2>&1
-in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/s25.log" 2>&1
+in_root $MIGRATE> "$W/s25.log" 2>&1
 check "S25: libretech-keyring purged, libre-computer-archive-keyring in" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring && ! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' libretech-keyring 2>/dev/null | grep -qxE 'installed|config-files'"
 check "S25: the pending mark and the moved sources survive (a rename is left: retried)" bash -c "test -e '$mnt$S/migrate-pending' && test -s '$mnt$S/moved-sources/libre-computer-deb.list'"
 check "S25: and the timer that retries it stays enabled" test -L "$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer"
