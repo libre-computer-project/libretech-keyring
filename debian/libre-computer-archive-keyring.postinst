@@ -4,6 +4,12 @@ set -e
 # not a chroot. An image build never reaches a systemd, even with the build host's /run bound in (without /proc,
 # systemd before 253 cannot see a chroot)
 live() { [ -d /run/systemd/system ] && [ -e /proc/1/comm ] && ! systemd-detect-virt --chroot --quiet 2>/dev/null; }
+# other_init: /sbin/init is there and is not systemd (sysvinit-core, openrc): no timer runs, so none is enabled
+# (a link already there stays; the move says why the board waits)
+other_init() {
+	[ -e /sbin/init ] || return 1
+	case $(readlink -f /sbin/init 2>/dev/null || echo /sbin/init) in */systemd) return 1 ;; esac
+}
 case "$1" in
 	configure)
 		# an upgrade may change the migration's unit files; with dh_systemd_start overridden nothing else
@@ -14,7 +20,7 @@ case "$1" in
 		# and started now rather than at the next boot (--no-block: a start never waits on the unit from inside
 		# apt)
 		S=/var/lib/libre-computer-archive-keyring
-		if [ -e "$S/migrate-pending" ] || [ -e "$S/kernel-pending" ] || [ -e "$S/move-pending" ]; then
+		if ! other_init && { [ -e "$S/migrate-pending" ] || [ -e "$S/kernel-pending" ] || [ -e "$S/move-pending" ]; }; then
 			systemctl --root=/ enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 			# (the link on disk: nothing else syncs /etc/systemd)
 			sync /etc/systemd/system/timers.target.wants /etc/systemd/system 2>/dev/null || sync

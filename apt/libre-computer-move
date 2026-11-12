@@ -388,6 +388,9 @@ retry_off() { rm -f "$STATE/move-pending"; }
 # dropped and the board is on deb.libre.computer again
 stay() {
 	if [ $stepped = 1 ]; then
+		# (the retry mark and its timer, whatever an earlier run left: this is reached only with systemd)
+		touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
+		timer_on
 		say "$1; an earlier move, cut short, left packages.libre.computer's source in $SRC beside deb.libre.computer's entries. Both stay, checked again every 6 hours: removing $SRC keeps the board on deb.libre.computer, removing the deb.libre.computer entries finishes the move"
 	else
 		say "$1; staying on deb.libre.computer"
@@ -441,10 +444,9 @@ case $init in
 	*)
 		[ "$init" != none-and-no-systemd ] || init=none
 		if [ $stepped = 1 ]; then
-			# (no timer would ever run here: no retry mark, and nothing scheduled. "moving" stays, so a run
-			# once the init is systemd again -- dpkg-reconfigure, an upgrade of this package -- finishes it)
-			say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: $SRC holds packages.libre.computer's source and the renames will not run. Removing $SRC returns the board to deb.libre.computer"
-			retry_off
+			# (nothing is finished or scheduled here. "moving" and the retry mark stay: no timer runs without
+			# systemd, and once the init is systemd again the timer step 1 enabled runs the move, which finishes it)
+			say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: $SRC holds packages.libre.computer's source, and the renames wait until the init is systemd. Removing $SRC returns the board to deb.libre.computer"
 			exit 0
 		fi
 		if [ -n "$old" ]; then

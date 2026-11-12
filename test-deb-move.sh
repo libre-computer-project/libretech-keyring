@@ -1113,7 +1113,7 @@ touch "$mnt$S/move-pending"
 ln -sfn /bin/true "$mnt/sbin/init"
 dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
 in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s80.log" 2>&1
-check "S80: nothing pending, the mark kept for a later run, and said why" bash -c "test ! -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/move-pending' && test -e '$mnt$S/moving' && grep -q 'renames will not run' '$W/s80.log'"
+check "S80: no migration, the marks kept for a run under systemd, and said why" bash -c "test ! -e '$mnt$S/migrate-pending' && test -e '$mnt$S/move-pending' && test -e '$mnt$S/moving' && grep -q 'renames wait until the init is systemd' '$W/s80.log'"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"
