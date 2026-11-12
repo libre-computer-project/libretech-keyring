@@ -266,14 +266,20 @@ undo_src() { # KIND BACKUP PATH: the previous libre-computer.sources back (file:
 		# (on disk before the rename over the file apt cannot read)
 		sync "$tmp" 2>/dev/null || sync
 		mv -T "$tmp" "$3"
-		tmp="" ;;
+		tmp=""
+		sync "${3%/*}" 2>/dev/null || sync ;;
 	link)
 		newtmp "$SRC" name
 		cp -P "$2" "$tmp"
 		mv -T "$tmp" "$SRC"
-		tmp="" ;;
-	*) rm -f "$SRC" ;;
+		tmp=""
+		sync "${SRC%/*}" 2>/dev/null || sync ;;
+	*)
+		rm -f "$SRC"
+		sync "${SRC%/*}" 2>/dev/null || sync ;;
 	esac
+	# (the restore on disk -- its directory's entry -- before the caller deletes the backup and the check record,
+	# which may sit on another filesystem: /var and /etc commit apart)
 }
 new_errors() { # BEFORE AFTER: the E: lines apt prints now and did not before
 	grep '^E:' "$2" | grep -vxF -f "$1"
