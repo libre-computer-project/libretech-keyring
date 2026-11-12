@@ -1002,5 +1002,12 @@ in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s69.log"
 check "S69: no migration scheduled, the board not marked moved, the stale mark gone" bash -c "test ! -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/moved' && test ! -e '$mnt$S/moving' && ! grep -q 'cut short' '$W/s69.log'"
 cleanup
 
+echo "== S70: a board whose init is not systemd (nothing would run the renames) stays on deb.libre.computer"
+setup
+ln -sfn /bin/true "$mnt/sbin/init"
+install_keyring
+check "S70: stays, says why, nothing pending" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/move-pending' && grep -q 'is not systemd' '$W/dpkg.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

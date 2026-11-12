@@ -40,7 +40,8 @@ the transitional package, and the timer's next run then removes the old name (ea
 manual or automatic mark, so autoremove never takes it). Removing the keyring package stops and disables the timer;
 its state in `/var/lib/libre-computer-archive-keyring` (the pending marks, the old source files kept) goes on purge,
 as a package's configuration does. Another release, a kernel channel other than `lc-lts`, or packages.libre.computer not
-answering keeps the board where it is (operator, 2026-11-10).
+answering keeps the board where it is (operator, 2026-11-10), as does an init other than systemd (nothing would
+run the renames).
 
 **What deb.libre.computer gets**: `build-deblibre.sh` builds a self-contained `libretech-keyring`
 (`<date>~deb.libre.computer`: the key, the move and the migration, no new dependency). `apt-get upgrade` never

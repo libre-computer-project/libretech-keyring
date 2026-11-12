@@ -357,6 +357,18 @@ if [ -z "$suite" ]; then
 	exit 0
 fi
 
+# the renames are run by a systemd timer: a board whose init is not systemd (sysvinit-core, openrc) would be
+# moved with nothing ever to rename its packages, so it stays. Read from /sbin/init, not from a running
+# systemd: an image being built in a chroot has none running, and boots with it
+init=$(readlink -f /sbin/init 2>/dev/null || true)
+case $init in
+	*/systemd) ;;
+	*)
+		say "this board's init (${init:-none}) is not systemd, which runs the renames; staying on deb.libre.computer"
+		[ $stepped = 1 ] || retry_off
+		exit 0 ;;
+esac
+
 # a kernel channel packages.libre.computer does not carry keeps the board on the frozen repo
 others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 2>/dev/null |
 	awk '$1 == "installed" {print $2}' |
