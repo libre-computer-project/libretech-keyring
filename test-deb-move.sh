@@ -992,5 +992,15 @@ in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s68.log"
 check "S68: the next run finishes step 2: the migration pending and the board moved, the marks cleared" bash -c "test -e '$mnt$S/migrate-pending' && test -e '$mnt$S/moved' && test ! -e '$mnt$S/moving' && test ! -e '$mnt$S/move-pending' && grep -q 'cut short after its new source went in' '$W/s68.log'"
 cleanup
 
+echo "== S69: a moving mark from a run stopped before its rename, the old entries since removed by hand: no move claimed"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+mkdir -p "$mnt$S"
+touch "$mnt$S/moving" "$mnt$S/move-pending"
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s69.log" 2>&1
+check "S69: no migration scheduled, the board not marked moved, the stale mark gone" bash -c "test ! -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/moved' && test ! -e '$mnt$S/moving' && ! grep -q 'cut short' '$W/s69.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

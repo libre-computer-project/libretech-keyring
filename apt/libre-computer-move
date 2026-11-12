@@ -323,6 +323,11 @@ retry_off() { rm -f "$STATE/move-pending"; }
 # gone once step 3 is done). A run stopped after that rename and before step 2's marks were on disk leaves a
 # board with no deb.libre.computer entry left -- every one was in that file -- and nothing scheduled: so a run
 # that finds nothing to move, with the mark still there, finishes step 2 (the migration pending, its timer on)
+# (only with the new stanza on the board, as step 1 wrote it: a mark a run stopped before its rename left, the
+# old file still in place, claims nothing and goes)
+if [ -z "$old" ] && [ -e "$STATE/moving" ] && [ $has_new = 0 ]; then
+	rm -f "$STATE/moving"
+fi
 if [ -z "$old" ] && [ -e "$STATE/moving" ]; then
 	touch "$STATE/migrate-pending" "$STATE/moved"
 	sync "$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
@@ -346,7 +351,9 @@ others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 
 	grep -vE '^linux-image-lc-lts-(arm64|arm|armhf|amd64)$' || true)
 if [ -n "$others" ]; then
 	say "this board follows a kernel channel packages.libre.computer does not carry ($(echo $others)); staying on deb.libre.computer"
-	retry_off
+	# (a move part-way -- step 1's new source in, "moving" -- keeps its retry mark: the board reads both
+	# repositories until the channel is lc-lts again and the move finishes, or the owner takes it back out)
+	[ -e "$STATE/moving" ] && [ $has_new = 1 ] || retry_off
 	exit 0
 fi
 
