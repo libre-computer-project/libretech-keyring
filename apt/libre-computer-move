@@ -41,8 +41,16 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 timer_on() {
 	systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
 	sync /etc/systemd/system/timers.target.wants /etc/systemd/system 2>/dev/null || sync
-	[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+	! live_systemd || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 }
+# live_systemd: this root's own systemd runs (units may be started now): systemd's runtime directory, a /proc,
+# and not a chroot. An image build in a chroot never starts units, even with the build host's /run bound in:
+# without /proc, systemd-detect-virt cannot see a chroot (before systemd 253), so no /proc counts as one
+live_systemd() {
+	[ -d /run/systemd/system ] && [ -e /proc/1/comm ] && ! systemd-detect-virt --chroot --quiet 2>/dev/null
+}
+# in_chroot: an image being built (a chroot, or no /proc at all)
+in_chroot() { [ ! -e /proc/1/comm ] || systemd-detect-virt --chroot --quiet 2>/dev/null; }
 
 # one-line (.list) entries, read by field as apt reads them: TYPE [OPTIONS] URI SUITE COMPONENTS, a # starting a
 # comment (a whole line, or the rest of one). Only the URI decides whose entry it is -- not a signed-by path or
@@ -365,7 +373,15 @@ init=none
 [ ! -e /sbin/init ] || init=$(readlink -f /sbin/init 2>/dev/null || echo /sbin/init)
 case $init in
 	*/systemd) ;;
-	none) [ -x /usr/lib/systemd/systemd ] || [ -x /lib/systemd/systemd ] || init=none-and-no-systemd ;;
+	# (no /sbin/init, or a dangling one: systemd's, only while an image is being built -- a chroot, or systemd
+	# itself running -- with systemd installed; a running system with some other PID 1, a container, is not)
+	none)
+		if { [ -x /usr/lib/systemd/systemd ] || [ -x /lib/systemd/systemd ]; } &&
+			{ in_chroot || [ -d /run/systemd/system ]; }; then
+			:
+		else
+			init=none-and-no-systemd
+		fi ;;
 esac
 case $init in
 	*/systemd | none) ;;
@@ -640,7 +656,7 @@ say "moved to packages.libre.computer ($suite); the old source files are in $STA
 # done, and a transient timer starts them 30 s from now
 # (not in a chroot -- an image build -- even one with the build host's /run bound in: systemd-run, unlike
 # systemctl, does not check, and would start the build host's own migration)
-if [ -d /run/systemd/system ] && ! systemd-detect-virt --chroot --quiet 2>/dev/null; then
+if live_systemd; then
 	systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 	systemd-run --quiet --no-block --on-active=30 --unit="libre-computer-migrate-now-$stamp-$$" \
 		systemctl start --no-block libre-computer-migrate.service >/dev/null 2>&1 ||

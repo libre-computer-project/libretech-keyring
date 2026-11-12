@@ -143,6 +143,9 @@ wait_lock() {
 # would, taking apt's and dpkg's locks, and changes nothing (a simulation, -s, takes no lock at all). dpkg left
 # half-done by someone else makes it fail at once: then there is nothing to wait for
 idle() { wait_lock apt-get -q check || true; }
+# idle_free: idle, and true only if no other apt or dpkg held a lock at its end (wait_lock gives up after 2 h:
+# an apt a killed run of this script's left running can outlast that)
+idle_free() { wait_lock apt-get -q check && return 0; ! is_locked; }
 
 # safe_apt ARGS: apt-get ARGS, only if its plan removes nothing but the names in $allow (set by the caller). The plan is read
 # again before every attempt: while a lock is held, another apt may change what this one would do
@@ -377,14 +380,16 @@ fi
 
 # dpkg whole first (no other apt or dpkg running, no journal, nothing part-done but the exception): part-done
 # work is dpkg's owner's to finish, never this script's (see partdone); until it is, the renames wait
-idle
+free=0
+! idle_free || free=1
 # a rename record whose old name is still here and new one not in is one a stop cut short before that rename's
 # removal (a run renaming several, cut short after some): it began nothing, and goes now, before the owner's
 # own apt runs can make its old name look taken by the rename (the window left is the time from boot to this
-# run). Only on dpkg's clear answer (never_began), with no other apt or dpkg running (idle above)
+# run). Only on dpkg's clear answer (never_began), with no other apt or dpkg running (free: a lock still held
+# could be an apt about to take that old name)
 for p in $pairs; do
 	o=${p%%:*} n=${p#*:}
-	[ -e "$STATE/pending-$n" ] && never_began "$o" "$n" && rm -f "$STATE/pending-$n" || true
+	[ $free = 1 ] && [ -e "$STATE/pending-$n" ] && never_began "$o" "$n" && rm -f "$STATE/pending-$n" || true
 done
 # (an old name part-done is let through here: a rename's run may remove it, and each run checks for itself)
 # shellcheck disable=SC2046
@@ -449,10 +454,13 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 			fi
 		fi
 		# a rename that never began (its new name not in, its old one still here: refused, held, missing) has
-		# no record left to it: one the next run finds is a rename a stop cut short
+		# no record left to it: one the next run finds is a rename a stop cut short (with no other apt or dpkg
+		# holding a lock, as at the start)
+		free=0
+		! idle_free || free=1
 		for p in $pairs; do
 			o=${p%%:*} n=${p#*:}
-			[ ! -e "$STATE/pending-$n" ] || ! never_began "$o" "$n" || rm -f "$STATE/pending-$n"
+			[ $free = 0 ] || [ ! -e "$STATE/pending-$n" ] || ! never_began "$o" "$n" || rm -f "$STATE/pending-$n"
 		done
 		# an old name its new one did not displace (a transitional package, which only Depends on the new name;
 		# the keyring keyring_swap deconfigured) goes once the new name is in, the new name keeping the old mark
