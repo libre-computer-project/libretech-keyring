@@ -512,7 +512,19 @@ fi
 # any state but removed: one a failed kernel upgrade left unpacked still names the channel)
 # (checked again after the probes: a move holding no dpkg lock can meet an owner's kernel install meanwhile)
 kernel_channel() {
-	others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 2>/dev/null |
+	# (dpkg-query exits 1 when nothing matches; any other failure -- its database unreadable -- is no answer: the
+	# board does not move on it, and the timer asks again)
+	kq=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 2>/dev/null) || {
+		kr=$?
+		if [ $kr != 1 ]; then
+			touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
+			timer_on
+			say "dpkg's database cannot be read (dpkg-query exit $kr), so this board's kernel channel is not known; staying on deb.libre.computer for now, and trying again every 6 hours"
+			exit 0
+		fi
+		kq=""
+	}
+	others=$(printf '%s\n' "$kq" |
 		awk '$1 != "not-installed" && $1 != "config-files" {print $2}' |
 		grep -E '^linux-image-lc-.+-(arm64|arm|armhf|amd64)$' |
 		grep -vE '^linux-image-lc-lts-(arm64|arm|armhf|amd64)$' || true)
