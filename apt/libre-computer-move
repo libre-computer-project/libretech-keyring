@@ -497,19 +497,22 @@ if [ $has_new = 0 ]; then
 	printf '%s' "$real_src" > "$C/path"
 	if [ -n "$src_backup" ]; then
 		printf '%s' "$src_backup" > "$C/backup"
-		echo file > "$C/kind"
+		kind=file
 	elif [ -n "$src_link" ]; then
 		printf '%s' "$src_link" > "$C/backup"
-		echo link > "$C/kind"
+		kind=link
 	else
 		: > "$C/backup"
-		echo none > "$C/kind"
+		kind=none
 	fi
-	# the record and the new file's content on disk before the rename: a power loss must find the one or the
-	# other whole, never an empty file under the source's name
-	# (the copy of the previous file too: it is what an undo puts back)
-	sync "$C/before.log" "$C/path" "$C/backup" "$C/kind" "$C" "$tmp" ${src_backup:+"$src_backup"} \
-		${src_link:+"$src_link"} "$STATE/moved-sources" 2>/dev/null || sync
+	# the rest of the record, the copy of the previous file (what an undo puts back) and the new file's content
+	# on disk first; then kind, on disk too, so a record whose kind is there is whole. $STATE as well: the
+	# entries of sources-check and move-pending, which may be on another filesystem than the source
+	sync "$C/before.log" "$C/path" "$C/backup" "$C" "$tmp" ${src_backup:+"$src_backup"} \
+		${src_link:+"$src_link"} "$STATE/moved-sources" "$STATE" 2>/dev/null || sync
+	echo "$kind" > "$C/kind"
+	sync "$C/kind" "$C" 2>/dev/null || sync
+	# then the rename: a power loss finds the old file or the new one whole, never an empty one
 	mv -T "$tmp" "$real_src"
 	tmp=""
 	# apt judges the sources as a whole: an entry of the board's own for packages.libre.computer in a shape
@@ -529,7 +532,11 @@ ns=${real_src:-$SRC}
 if [ $has_new = 0 ]; then
 	sync "$ns" "${ns%/*}" "$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
 else
-	sync "$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
+	# the board's own entry for packages.libre.computer stays the source: its files and their directories on
+	# disk too (one may be the file an earlier run renamed in and was stopped before syncing)
+	# shellcheck disable=SC2086
+	sync $newfiles $(for nf in $newfiles; do printf '%s ' "${nf%/*}"; done) \
+		"$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
 fi
 
 # 3. the deb.libre.computer entries out
@@ -549,6 +556,8 @@ for f in $old; do
 		cp -pL "$f" "$b"
 		sync "$b" "${b%/*}" 2>/dev/null || sync
 		rm -f "$f"
+		# (the removal on disk before the retry mark goes, which may be on another filesystem)
+		sync "${f%/*}" 2>/dev/null || sync
 		continue
 	fi
 	# a file with other entries too: the original kept, ours disabled in place -- in the file itself, or in
