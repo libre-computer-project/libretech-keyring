@@ -326,6 +326,11 @@ keyring_swap() {
 	# renaming mark is never held across a wait (an owner's removal of the keyring meanwhile stays theirs)
 	idle
 	whole || return 1
+	# (the old keyring still here: the owner may have removed it while this run waited, and that removal is theirs)
+	if ! pr libretech-keyring; then
+		say "libretech-keyring was removed meanwhile; not installing libre-computer-archive-keyring in its place"
+		return 1
+	fi
 	record_pending libre-computer-archive-keyring
 	run_begin
 	if dpkg --auto-deconfigure --force-confold --force-confdef -i "$1" >"$W/out" 2>&1; then

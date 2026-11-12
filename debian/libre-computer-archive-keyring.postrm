@@ -6,14 +6,25 @@ S=/var/lib/libre-computer-archive-keyring
 # over. Then the timer's link and the state stay. Any other removal (libre-computer-archive-keyring itself, or the
 # owner removing libretech-keyring by hand) takes them with it: nothing would run the work left
 # The mark names the boot, the migration's pid and that process's start time: one a power loss or a kill left
-# behind (that process gone, or its pid now another's) is no rename under way
+# behind (that process gone, or its pid now another's) is no rename under way. And this removal must be the
+# migration's own: the process running this script descends from it (the migration sets the mark just before
+# its apt or dpkg run, which another apt, running already, could still beat to the lock -- that removal is the
+# owner's)
 renaming() {
 	[ "${DPKG_MAINTSCRIPT_PACKAGE:-}" != libre-computer-archive-keyring ] && [ -s "$S/renaming" ] || return 1
 	read -r rb rp rs < "$S/renaming" || return 1
 	[ -n "${rp:-}" ] && kill -0 "$rp" 2>/dev/null || return 1
 	bid=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
 	bst=$(sed 's/.*) //' "/proc/$rp/stat" 2>/dev/null | cut -d' ' -f20 || true)
-	[ "$rb" = "${bid:--}" ] && [ "${rs:-}" = "${bst:--}" ]
+	[ "$rb" = "${bid:--}" ] && [ "${rs:-}" = "${bst:--}" ] || return 1
+	# up this process's parents (the field after the state, past the ") " ending the command name), at most 64
+	x=$$ i=0
+	while [ "$x" -gt 1 ] 2>/dev/null && [ $i -lt 64 ]; do
+		[ "$x" != "$rp" ] || return 0
+		x=$(sed 's/.*) //' "/proc/$x/stat" 2>/dev/null | cut -d' ' -f2) || return 1
+		i=$((i + 1))
+	done
+	return 1
 }
 case "$1" in
 	purge)
