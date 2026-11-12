@@ -1060,5 +1060,13 @@ in_root env DEBCONF_RECONFIGURE=1 DPKG_MAINTSCRIPT_PACKAGE=libre-computer-archiv
 check "S75: no state, no new source, deb.libre.computer kept, and said why" bash -c "test ! -e '$mnt$S' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && grep -q 'removed meanwhile' '$W/s75.log'"
 cleanup
 
+echo "== S76: another kernel channel's meta-package left unpacked by a failed upgrade: the board stays"
+setup
+dummy linux-image-lc-edge-arm64
+in_root dpkg --unpack /tmp/linux-image-lc-edge-arm64.deb > "$W/s76.log" 2>&1
+install_keyring
+check "S76: stays on deb.libre.computer, says why, nothing pending" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt$S/migrate-pending' && grep -q 'kernel channel packages.libre.computer does not carry' '$W/dpkg.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

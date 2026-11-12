@@ -437,9 +437,10 @@ case $init in
 		exit 0 ;;
 esac
 
-# a kernel channel packages.libre.computer does not carry keeps the board on the frozen repo
+# a kernel channel packages.libre.computer does not carry keeps the board on the frozen repo (its meta-package in
+# any state but removed: one a failed kernel upgrade left unpacked still names the channel)
 others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 2>/dev/null |
-	awk '$1 == "installed" {print $2}' |
+	awk '$1 != "not-installed" && $1 != "config-files" {print $2}' |
 	grep -E '^linux-image-lc-.+-(arm64|arm|armhf|amd64)$' |
 	grep -vE '^linux-image-lc-lts-(arm64|arm|armhf|amd64)$' || true)
 if [ -n "$others" ]; then
@@ -452,7 +453,7 @@ fi
 
 # the board is to move: from here on, any failure (a full /tmp, a probe) leaves the mark the timer retries,
 # cleared once the move is done or found impossible
-touch "$STATE/move-pending" && { sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync; }
+touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
 timer_on
 
 ARCH=$(dpkg --print-architecture)
@@ -488,7 +489,7 @@ if [ $has_new = 0 ]; then
 		# a network or clock fault at upgrade time must not leave the board on the frozen repo for good
 		still_ours
 		mkdir -p "$STATE"
-		touch "$STATE/move-pending" && { sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync; }
+		touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
 		timer_on
 		exit 0
 	fi
@@ -522,7 +523,7 @@ if [ $has_new = 1 ]; then
 		grep -E '^(E|W|Err):' "$T/own.log" | sed 's/^/  /' || true
 		still_ours
 		mkdir -p "$STATE"
-		touch "$STATE/move-pending" && { sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync; }
+		touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
 		timer_on
 		exit 0
 	fi
@@ -539,7 +540,7 @@ backup() { # FILE: the path its original is kept at, never one already taken
 
 # a failure from here on (a full disk, a failed copy) is retried by the timer: the mark is set before anything
 # changes and cleared once the move is done
-touch "$STATE/move-pending" && { sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync; }
+touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
 timer_on
 
 # 1. the new source in place first, so the board never lacks one (a full disk stops here, before anything
