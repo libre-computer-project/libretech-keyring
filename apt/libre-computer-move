@@ -352,8 +352,14 @@ say_unreadable() { # LOG
 unreadable() { # LOG: say so, and the previous source back (its copy, now the file again, not kept twice)
 	ub=$(cat "$C/backup")
 	undo_src "$(cat "$C/kind")" "$ub" "$(cat "$C/path")"
-	# (step 1 undone: nothing moved, so no "moving" for a later run to finish)
-	rm -f "$STATE/moving"
+	# (step 1 undone: this run moved nothing, so "moving" is what it was before -- an earlier run's part-way move,
+	# whose stanza the undo has put back, or none)
+	if [ -e "$C/moving" ]; then
+		cp "$C/moving" "$STATE/moving"
+		sync "$STATE/moving" 2>/dev/null || sync
+	else
+		rm -f "$STATE/moving"
+	fi
 	# the record before the backup it names, on disk first: a power loss between the two never leaves a
 	# record whose backup is gone (the next run's undo would have nothing to copy back)
 	rm -rf "$C"
@@ -498,6 +504,9 @@ if [ -n "$others" ]; then
 	# (stepped: also until the channel is lc-lts again, when the move finishes)
 	stay "this board follows a kernel channel packages.libre.computer does not carry ($(echo $others))"
 fi
+# a directory where the new source would go: it cannot take its name (a stay like the others, before any mark
+# is set)
+[ $has_new = 1 ] || [ ! -d "$SRC" ] || stay "$SRC is a directory; the new source cannot take its name"
 
 # the board is to move: from here on, any failure (a full /tmp, a probe) leaves the mark the timer retries,
 # cleared once the move is done or found impossible
@@ -519,11 +528,6 @@ stanza() { # KEY: the new source's stanza
 # the shipped stanza is not needed: an http-only path is fine for an http entry). apt itself updates the new
 # source alone into scratch lists (apt's proxy settings apply; it checks the signature, and the Release
 # date against the board's clock). A proxy or an egress allowlist can admit only the old host
-if [ $has_new = 0 ] && [ -d "$SRC" ]; then
-	say "$SRC is a directory; the new source cannot take its name; staying on deb.libre.computer"
-	retry_off
-	exit 0
-fi
 if [ $has_new = 0 ]; then
 	mkdir -p "$T/parts" "$T/lists/partial" "$T/cache/archives/partial"
 	! id _apt >/dev/null 2>&1 || chown _apt "$T/lists/partial" "$T/cache/archives/partial"
@@ -672,9 +676,12 @@ if [ $has_new = 0 ]; then
 	# on disk first; then kind, on disk too, so a record whose kind is there is whole. $STATE as well: the
 	# entries of sources-check and move-pending, which may be on another filesystem than the source
 	# ("moving" too: see where it is read, after the scan for old entries)
-	# (the suite it writes: the board may move to another release before a run finds the mark)
+	# (the suite it writes: the board may move to another release before a run finds the mark; an earlier
+	# run's mark, a part-way move this run redoes, is kept in the record for an undo to put back)
+	cm=""
+	[ ! -e "$STATE/moving" ] || { cp "$STATE/moving" "$C/moving"; cm=$C/moving; }
 	echo "$suite" > "$STATE/moving"
-	sync "$C/before.log" "$C/path" "$C/backup" "$C" "$tmp" ${src_backup:+"$src_backup"} \
+	sync "$C/before.log" "$C/path" "$C/backup" ${cm:+"$cm"} "$C" "$tmp" ${src_backup:+"$src_backup"} \
 		${src_link:+"$src_link"} "$STATE/moved-sources" "$STATE/moving" "$STATE" 2>/dev/null || sync
 	echo "$kind" > "$C/kind"
 	sync "$C/kind" "$C" 2>/dev/null || sync
