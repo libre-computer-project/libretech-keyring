@@ -56,6 +56,12 @@ run the renames).
 - An image built in a container (not a chroot, `/proc` present, PID 1 not systemd) that adds its init after this
   package stays on deb.libre.computer: it cannot be told from a running container without systemd, which must
   stay. `dpkg-reconfigure libre-computer-archive-keyring` moves it once its init is in.
+- The suite the move writes into `libre-computer.sources` is the owner's to carry through a release upgrade, as
+  every source of the board's is (the usual `sed` over `sources.list.d` does it): the move never rewrites a
+  suite it has written. A board upgraded between a move cut short and its next run keeps the old suite's stanza
+  until then, and gets the new release's stanza beside it if a deb.libre.computer entry is left elsewhere. Telling
+  the stanza the move wrote from one the owner added or edited since would take a record of its exact content,
+  and replacing an owner's entry is the one thing the move must never do.
 
 **What deb.libre.computer gets**: `build-deblibre.sh` builds a self-contained `libretech-keyring`
 (`<date>~deb.libre.computer`: the key, the move and the migration, no new dependency). `apt-get upgrade` never

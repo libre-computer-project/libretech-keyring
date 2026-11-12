@@ -1092,7 +1092,7 @@ in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s78.log"
 check "S78: the migration pending, the marks cleared" bash -c "test -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/moving' && test ! -e '$mnt$S/move-pending'"
 cleanup
 
-echo "== S79: the stop on bookworm, the upgrade to trixie, a deb.libre.computer entry left elsewhere: the bookworm stanza is replaced"
+echo "== S79: the stop on bookworm, the upgrade to trixie, a deb.libre.computer entry left elsewhere: it moves, the bookworm stanza kept (README Known limits)"
 setup
 printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: bookworm\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 mkdir -p "$mnt$S"
@@ -1100,7 +1100,7 @@ echo bookworm > "$mnt$S/moving"
 touch "$mnt$S/move-pending"
 dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
 in_root env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo/test-key.gpg sh /tmp/lc-move > "$W/s79.log" 2>&1
-check "S79: moved, trixie's stanza in and bookworm's gone" bash -c "grep -qx 'Suites: trixie' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && ! grep -q 'bookworm' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending'"
+check "S79: moved, trixie's stanza added, bookworm's kept, the migration pending" bash -c "grep -qx 'Suites: trixie' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Suites: bookworm' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending' && test ! -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list'"
 cleanup
 
 echo "test-deb-move: $PASS passed, $FAIL failed"
