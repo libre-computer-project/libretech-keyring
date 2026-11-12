@@ -486,7 +486,9 @@ if [ -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $dpkg_
 		if [ -n "$left" ]; then
 			say "still installed under an old name:$left; will retry"
 		else
-			rm -f "$STATE/migrate-pending"
+			# (migrate-pending goes after the kernel step's own mark is on disk, below: a power loss between the
+			# two must not leave neither)
+			renames_done=1
 			say "done: the board reads packages.libre.computer under the libre-computer names"
 		fi
 	fi
@@ -527,9 +529,11 @@ fi
 if [ -n "$waiting" ]; then
 	mkdir -p "$STATE"
 	touch "$STATE/kernel-pending"
+	sync "$STATE/kernel-pending" "$STATE" 2>/dev/null || sync
 	say "the kernel's new names come with your next 'apt upgrade';$waiting stay until then"
 else
 	rm -f "$STATE/kernel-pending"
 fi
+[ "${renames_done:-0}" = 0 ] || rm -f "$STATE/migrate-pending"
 [ ! -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $failed = 0 ] || exit 1
 [ -e "$STATE/kernel-pending" ] || systemctl disable libre-computer-migrate.timer >/dev/null 2>&1 || true

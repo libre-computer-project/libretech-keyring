@@ -35,6 +35,14 @@ if [ -z "$PKG" ]; then
 		PKG=libre-computer-archive-keyring
 fi
 say() { echo "libre-computer-archive-keyring: $*"; }
+# timer_on: the migration's timer enabled, its link on disk (the link's directory synced: nothing else syncs
+# /etc/systemd, and a filesystem that does not keep metadata in order could otherwise keep a later change --
+# the old sources' removal -- and lose the link), and started now where systemd runs (--no-block)
+timer_on() {
+	systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+	sync /etc/systemd/system/timers.target.wants /etc/systemd/system 2>/dev/null || sync
+	[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+}
 
 # one-line (.list) entries, read by field as apt reads them: TYPE [OPTIONS] URI SUITE COMPONENTS, a # starting a
 # comment (a whole line, or the rest of one). Only the URI decides whose entry it is -- not a signed-by path or
@@ -323,17 +331,22 @@ retry_off() { rm -f "$STATE/move-pending"; }
 # gone once step 3 is done). A run stopped after that rename and before step 2's marks were on disk leaves a
 # board with no deb.libre.computer entry left -- every one was in that file -- and nothing scheduled: so a run
 # that finds nothing to move, with the mark still there, finishes step 2 (the migration pending, its timer on)
-# (only with the new stanza on the board, as step 1 wrote it: a mark a run stopped before its rename left, the
-# old file still in place, claims nothing and goes)
-if [ -z "$old" ] && [ -e "$STATE/moving" ] && [ $has_new = 0 ]; then
-	rm -f "$STATE/moving"
+# (only with the new stanza in libre-computer.sources itself, the file step 1 writes: a mark a run stopped
+# before its rename left, the old file still in place, claims nothing and goes, whatever entry of the owner's
+# names packages.libre.computer elsewhere)
+stepped=0
+if [ -e "$STATE/moving" ]; then
+	if [ -f "$SRC" ] && [ "$(count new "$SRC")" -gt 0 ] 2>/dev/null; then
+		stepped=1
+	else
+		rm -f "$STATE/moving"
+	fi
 fi
-if [ -z "$old" ] && [ -e "$STATE/moving" ]; then
+if [ -z "$old" ] && [ $stepped = 1 ]; then
 	touch "$STATE/migrate-pending" "$STATE/moved"
 	sync "$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
 	rm -f "$STATE/moving"
-	systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-	[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+	timer_on
 	say "the move to packages.libre.computer was cut short after its new source went in; the renames are now pending"
 fi
 [ -n "$old" ] || { retry_off; exit 0; }
@@ -353,15 +366,14 @@ if [ -n "$others" ]; then
 	say "this board follows a kernel channel packages.libre.computer does not carry ($(echo $others)); staying on deb.libre.computer"
 	# (a move part-way -- step 1's new source in, "moving" -- keeps its retry mark: the board reads both
 	# repositories until the channel is lc-lts again and the move finishes, or the owner takes it back out)
-	[ -e "$STATE/moving" ] && [ $has_new = 1 ] || retry_off
+	[ $stepped = 1 ] || retry_off
 	exit 0
 fi
 
 # the board is to move: from here on, any failure (a full /tmp, a probe) leaves the mark the timer retries,
 # cleared once the move is done or found impossible
 touch "$STATE/move-pending"
-systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+timer_on
 
 ARCH=$(dpkg --print-architecture)
 T=$(mktemp -d)
@@ -396,8 +408,7 @@ if [ $has_new = 0 ]; then
 		# a network or clock fault at upgrade time must not leave the board on the frozen repo for good
 		mkdir -p "$STATE"
 		touch "$STATE/move-pending"
-		systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-		[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+		timer_on
 		exit 0
 	fi
 fi
@@ -430,8 +441,7 @@ if [ $has_new = 1 ]; then
 		grep -E '^(E|W|Err):' "$T/own.log" | sed 's/^/  /' || true
 		mkdir -p "$STATE"
 		touch "$STATE/move-pending"
-		systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-		[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+		timer_on
 		exit 0
 	fi
 fi
@@ -447,8 +457,7 @@ backup() { # FILE: the path its original is kept at, never one already taken
 # a failure from here on (a full disk, a failed copy) is retried by the timer: the mark is set before anything
 # changes and cleared once the move is done
 touch "$STATE/move-pending"
-systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
-[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+timer_on
 
 # 1. the new source in place first, so the board never lacks one (a full disk stops here, before anything
 # changed). A board that already reads packages.libre.computer keeps its own entry: a second one with a

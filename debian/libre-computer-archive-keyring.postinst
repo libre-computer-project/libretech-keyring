@@ -11,6 +11,8 @@ case "$1" in
 		S=/var/lib/libre-computer-archive-keyring
 		if [ -e "$S/migrate-pending" ] || [ -e "$S/kernel-pending" ] || [ -e "$S/move-pending" ]; then
 			systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+			# (the link on disk: nothing else syncs /etc/systemd)
+			sync /etc/systemd/system/timers.target.wants /etc/systemd/system 2>/dev/null || sync
 			[ ! -d /run/systemd/system ] ||
 				systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 		fi
