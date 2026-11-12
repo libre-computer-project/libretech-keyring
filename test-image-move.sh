@@ -31,7 +31,8 @@ PASS=0 FAIL=0
 check() { local what=$1; shift; if "$@" >/dev/null 2>&1; then PASS=$((PASS + 1)); echo "PASS  $what"; else FAIL=$((FAIL + 1)); echo "FAIL  $what"; fi; }
 mnt="" loop=""
 cleanup() {
-	[[ -z "$mnt" ]] || { umount -R "$mnt" 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true; }
+	# (a mount still busy is detached lazily: a root left mounted would stay for good, with its binds of /dev)
+	[[ -z "$mnt" ]] || { umount -R "$mnt" 2>/dev/null || umount -lR "$mnt" 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true; }
 	[[ -z "$loop" ]] || losetup -d "$loop" 2>/dev/null || true
 	mnt="" loop=""
 }
@@ -51,7 +52,8 @@ for p in "$loop"p*; do
 	umount "$mnt"
 done
 mountpoint -q "$mnt" || { echo "no root partition in $img" >&2; exit 1; }
-for m in dev dev/pts proc sys; do mount --bind "/$m" "$mnt/$m"; done
+# (each bind private, so it is no peer of the host's mount: later mounts are not copied into it, nor it into them)
+for m in dev dev/pts proc sys; do mount --bind "/$m" "$mnt/$m"; mount --make-private "$mnt/$m"; done
 mount -t tmpfs tmpfs "$mnt/run"
 mount -t tmpfs tmpfs "$mnt/tmp"
 in_root() { chroot "$mnt" "$@"; }

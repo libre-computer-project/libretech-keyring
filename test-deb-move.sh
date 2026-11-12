@@ -28,7 +28,9 @@ PASS=0 FAIL=0
 check() { local what=$1; shift; if "$@" >/dev/null 2>&1; then PASS=$((PASS + 1)); echo "PASS  $what"; else FAIL=$((FAIL + 1)); echo "FAIL  $what"; fi; }
 mnt="" loop=""
 cleanup() {
-	[[ -z "$mnt" ]] || { umount -R "$mnt" 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true; }
+	# (a mount still busy -- a process the chroot left -- is detached lazily: a root left mounted would stay for
+	# good, and with it its binds of /dev)
+	[[ -z "$mnt" ]] || { umount -R "$mnt" 2>/dev/null || umount -lR "$mnt" 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true; }
 	[[ -z "$loop" ]] || losetup -d "$loop" 2>/dev/null || true
 	mnt="" loop=""
 }
@@ -100,7 +102,9 @@ setup() {
 	mnt=$(mktemp -d)
 	mount "${loop}p2" "$mnt"
 	local m
-	for m in dev dev/pts proc sys; do mount --bind "/$m" "$mnt/$m"; done
+	# (each bind private: a bind of the host's /dev is otherwise a peer of it, and every later mount under any
+	# peer -- each scenario's dev/pts -- is copied into all of them, multiplying with each root left behind)
+	for m in dev dev/pts proc sys; do mount --bind "/$m" "$mnt/$m"; mount --make-private "$mnt/$m"; done
 	mount -t tmpfs tmpfs "$mnt/run"
 	mount -t tmpfs tmpfs "$mnt/tmp"
 	mkdir -p "$mnt/srv/test-repo"
