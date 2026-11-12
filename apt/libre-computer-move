@@ -35,6 +35,16 @@ if [ -z "$PKG" ]; then
 		PKG=libre-computer-archive-keyring
 fi
 say() { echo "libre-computer-archive-keyring: $*"; }
+# still_ours: run by the migration (LC_MOVE_FROM_MIGRATE), the keyring's state and key are still there before
+# this run writes into the state or the sources. The move holds no dpkg lock (its probe, a network fetch, can
+# take minutes), so the owner may remove or purge the keyring meanwhile; that removal is theirs, and the move
+# stops there, re-creating nothing. (From the postinst, dpkg holds its lock: nothing can remove the package)
+still_ours() {
+	[ -n "${LC_MOVE_FROM_MIGRATE:-}" ] || return 0
+	[ -d "$STATE" ] && [ -s "$KEY" ] && return 0
+	say "the keyring was removed meanwhile; stopping, nothing more changed"
+	exit 0
+}
 # timer_on: the migration's timer enabled, its link on disk (the link's directory synced: nothing else syncs
 # /etc/systemd, and a filesystem that does not keep metadata in order could otherwise keep a later change --
 # the old sources' removal -- and lose the link), and started now where systemd runs (--no-block)
@@ -246,6 +256,7 @@ esac
 # the files with an enabled entry for the frozen repo, and whether the board already reads the new one
 # one move at a time (the timer's run and a dpkg-reconfigure or a keyring upgrade can meet): the second waits,
 # then finds the board moved and has nothing to do
+still_ours
 mkdir -p "$STATE"
 exec 9>"$STATE/.move.lock"
 flock 9
@@ -447,6 +458,7 @@ if [ $has_new = 0 ]; then
 		say "packages.libre.computer ($URI) is not usable from this board; staying on deb.libre.computer for now, and trying again every 6 hours (or run 'dpkg-reconfigure $PKG'). apt said:"
 		grep -E '^(E|W|Err):' "$T/probe.log" | sed 's/^/  /' || true
 		# a network or clock fault at upgrade time must not leave the board on the frozen repo for good
+		still_ours
 		mkdir -p "$STATE"
 		touch "$STATE/move-pending"
 		timer_on
@@ -480,6 +492,7 @@ if [ $has_new = 1 ]; then
 		! ls "$T/ownlists/" 2>/dev/null | grep -qiE -- "${want}_main_binary-${ARCH}_Packages"; then
 		say "the board's own entry for packages.libre.computer is not usable (its key, or the network); staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
 		grep -E '^(E|W|Err):' "$T/own.log" | sed 's/^/  /' || true
+		still_ours
 		mkdir -p "$STATE"
 		touch "$STATE/move-pending"
 		timer_on
@@ -487,6 +500,7 @@ if [ $has_new = 1 ]; then
 	fi
 fi
 
+still_ours
 mkdir -p "$STATE/moved-sources"
 stamp=$(date +%Y%m%d%H%M%S)
 backup() { # FILE: the path its original is kept at, never one already taken

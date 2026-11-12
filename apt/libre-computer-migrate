@@ -392,7 +392,9 @@ archs() {
 # the move again, if packages.libre.computer was not usable at the last try (it clears the mark when it moves the
 # board, or when there is nothing to move)
 if [ -e "$STATE/move-pending" ]; then
-	/usr/lib/libre-computer-archive-keyring/libre-computer-move || true
+	LC_MOVE_FROM_MIGRATE=1 /usr/lib/libre-computer-archive-keyring/libre-computer-move || true
+	# (the keyring removed during the move's probe: the move stopped, and so does this run)
+	state_here
 	if [ -e "$STATE/move-pending" ]; then
 		say "packages.libre.computer is still not usable from this board; will retry"
 		failed=1

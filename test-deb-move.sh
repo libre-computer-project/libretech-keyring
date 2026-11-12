@@ -1039,5 +1039,15 @@ guarded " " install /tmp/zz-replacer.deb
 check "S73: a Replaces whose version does not cover the one on the board: let through" bash -c "$(declare -f installed); mnt='$mnt'; installed owner-thing && installed zz-replacer"
 cleanup
 
+echo "== S74: the keyring purged while the migration's move probes packages.libre.computer: the move stops, re-creating nothing"
+setup
+install_keyring
+rm -rf "$mnt$S"
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+# (the state gone before the move's first write, as a purge during its probe leaves it)
+in_root env LC_MOVE_FROM_MIGRATE=1 LC_PACKAGES_URI=file:///srv/unreachable sh /tmp/lc-move > "$W/s74.log" 2>&1
+check "S74: no state directory re-created, and said why" bash -c "test ! -e '$mnt$S' && grep -q 'removed meanwhile' '$W/s74.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
