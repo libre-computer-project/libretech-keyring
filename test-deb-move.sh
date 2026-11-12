@@ -1009,5 +1009,12 @@ install_keyring
 check "S70: stays, says why, nothing pending" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/move-pending' && grep -q 'is not systemd' '$W/dpkg.log'"
 cleanup
 
+echo "== S71: an image build with no /sbin/init yet (its init added later) and systemd itself installed: it moves"
+setup
+rm -f "$mnt/sbin/init"
+install_keyring
+check "S71: moved, the migration pending" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending' && ! grep -q 'is not systemd' '$W/dpkg.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

@@ -359,12 +359,19 @@ fi
 
 # the renames are run by a systemd timer: a board whose init is not systemd (sysvinit-core, openrc) would be
 # moved with nothing ever to rename its packages, so it stays. Read from /sbin/init, not from a running
-# systemd: an image being built in a chroot has none running, and boots with it
-init=$(readlink -f /sbin/init 2>/dev/null || true)
+# systemd: an image being built in a chroot has none running, and boots with it. No /sbin/init yet (an image
+# build that adds its init after this package) counts as systemd when systemd itself is installed
+init=none
+[ ! -e /sbin/init ] || init=$(readlink -f /sbin/init 2>/dev/null || echo /sbin/init)
 case $init in
 	*/systemd) ;;
+	none) [ -x /usr/lib/systemd/systemd ] || [ -x /lib/systemd/systemd ] || init=none-and-no-systemd ;;
+esac
+case $init in
+	*/systemd | none) ;;
 	*)
-		say "this board's init (${init:-none}) is not systemd, which runs the renames; staying on deb.libre.computer"
+		[ "$init" != none-and-no-systemd ] || init=none
+		say "this board's init ($init) is not systemd, which runs the renames; staying on deb.libre.computer"
 		[ $stepped = 1 ] || retry_off
 		exit 0 ;;
 esac
@@ -631,7 +638,9 @@ say "moved to packages.libre.computer ($suite); the old source files are in $STA
 
 # 4. the renames need apt, which is busy until this install finishes: the timer retries until they are
 # done, and a transient timer starts them 30 s from now
-if [ -d /run/systemd/system ]; then
+# (not in a chroot -- an image build -- even one with the build host's /run bound in: systemd-run, unlike
+# systemctl, does not check, and would start the build host's own migration)
+if [ -d /run/systemd/system ] && ! systemd-detect-virt --chroot --quiet 2>/dev/null; then
 	systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
 	systemd-run --quiet --no-block --on-active=30 --unit="libre-computer-migrate-now-$stamp-$$" \
 		systemctl start --no-block libre-computer-migrate.service >/dev/null 2>&1 ||
