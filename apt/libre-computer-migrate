@@ -582,5 +582,7 @@ else
 	rm -f "$STATE/kernel-pending"
 fi
 [ "${renames_done:-0}" = 0 ] || rm -f "$STATE/migrate-pending"
+# (the removals on disk before the timer's link goes, which may be on another filesystem)
+sync "$STATE" 2>/dev/null || sync
 [ ! -e "$STATE/migrate-pending" ] && [ ! -e "$STATE/move-pending" ] && [ $failed = 0 ] || exit 1
 [ -e "$STATE/kernel-pending" ] || systemctl disable libre-computer-migrate.timer >/dev/null 2>&1 || true

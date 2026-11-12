@@ -146,6 +146,7 @@ list_awk() { # MODE FILE
 			if (entry && mode == "other" && (commented || !libre)) c++
 			isn = entry && !commented && type == "deb" && isnew(uri) && dist != "" && dist == suite
 			if (mode == "new" && isn) c++
+			if (mode == "anynew" && entry && !commented && type == "deb" && isnew(uri)) c++
 			if (mode == "pick" && isn) print raw
 			if (mode == "disable") {
 				if (entry && !commented && libre) print "# moved to packages.libre.computer: " raw
@@ -221,6 +222,7 @@ sources_awk() { # MODE FILE
 			ntok = split(v, t, /[[:space:]]+/)
 			for (k = 1; k <= ntok; k++) if (t[k] != "" && isnew(t[k])) hn = 1
 			if (mode == "new" && !off && hn && hs && hd) c++
+			if (mode == "anynew" && !off && hn && hd) c++
 			if (mode == "pick" && !off && hn && hs && hd) { for (k = 1; k <= n; k++) print line[k]; print "" }
 			if (mode == "disable") {
 				for (k = 1; k <= n; k++) {
@@ -368,7 +370,8 @@ if [ -s "$C/kind" ]; then
 	T=""
 fi
 
-old="" has_new=0 newfiles=""
+# (has_any: an enabled entry for packages.libre.computer for any suite -- the board reads it whatever its release)
+old="" has_new=0 has_any=0 newfiles=""
 for f in "$SL" "$SP"/*.list "$SP"/*.sources; do
 	[ -f "$f" ] || continue
 	# only a file apt reads: it skips a name with any character outside letters, digits, _ - . : (so no
@@ -376,22 +379,23 @@ for f in "$SL" "$SP"/*.list "$SP"/*.sources; do
 	case ${f##*/} in *[!A-Za-z0-9_.:-]*) continue ;; esac
 	# (a count awk could not make, e.g. of a file root cannot read, counts as none)
 	if [ "$(count new "$f")" -gt 0 ] 2>/dev/null; then has_new=1; newfiles="$newfiles $f"; fi
+	if [ "$(count anynew "$f")" -gt 0 ] 2>/dev/null; then has_any=1; fi
 	[ "$(count ours "$f")" -gt 0 ] || continue
 	old="$old $f"
 done
 # move-pending: a move the timer retries (packages.libre.computer was not usable at the last try)
 retry_off() { rm -f "$STATE/move-pending"; }
-# stay REASON: the board does not move, saying why, and exits. A move part-way ("stepped": step 1's source in
-# libre-computer.sources, deb.libre.computer's entries left elsewhere) keeps its retry mark: the board reads both
-# repositories, and the next run after the owner removes either settles it -- the deb.libre.computer entries
-# gone, step 2 is finished and the renames read the stanza step 1 wrote; libre-computer.sources gone, the mark is
-# dropped and the board is on deb.libre.computer again
+# stay REASON: the board does not move, saying why, and exits. A move part-way ("stepped": its packages.libre.computer
+# source in, deb.libre.computer's entries left) keeps its retry mark: the board reads both repositories, and the
+# move finishes at a run that finds the reason gone, or the deb.libre.computer entries gone. (No advice on what to
+# remove to stay: which files hold what after a cut-short move is the move's to know, and the owner's sources are
+# theirs.) Not stepped: nothing changes, and the marks of a migration that cannot run go (unmoved)
 stay() {
 	if [ $stepped = 1 ]; then
 		# (the retry mark and its timer, whatever an earlier run left: this is reached only with systemd)
 		touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
 		timer_on
-		say "$1; an earlier move, cut short, left packages.libre.computer's source in $SRC beside deb.libre.computer's entries. Both stay, checked again every 6 hours: removing $SRC keeps the board on deb.libre.computer, removing the deb.libre.computer entries finishes the move"
+		say "$1; an earlier move, cut short, left packages.libre.computer's source beside deb.libre.computer's entries. Both stay; this is checked again every 6 hours, and the move finishes once that no longer holds or the deb.libre.computer entries are gone"
 	else
 		say "$1; staying on deb.libre.computer"
 		retry_off
@@ -399,11 +403,11 @@ stay() {
 	fi
 	exit 0
 }
-# unmoved: a board that stays and reads no packages.libre.computer entry (has_new 0) has no migration to run: the
-# marks an earlier, cut-short move left (step 2's, its source since removed by the owner) go, synced, so no timer
-# runs a migration that cannot (its rename records stay, for the move that comes later)
+# unmoved: a board that stays and reads no packages.libre.computer entry for any suite (has_any 0) has no migration
+# to run: the marks an earlier, cut-short move left (step 2's, its source since removed by the owner) go, synced,
+# so no timer runs a migration that cannot (its rename records stay, for the move that comes later)
 unmoved() {
-	[ $has_new = 0 ] || return 0
+	[ $has_any = 0 ] || return 0
 	rm -f "$STATE/migrate-pending" "$STATE/moved" "$STATE/kernel-pending"
 	sync "$STATE" 2>/dev/null || sync
 }
@@ -418,11 +422,15 @@ unmoved() {
 # release since; a mark that names none, from an older version, means this run's suite)
 # (Like every source of the board's, that stanza is the owner's to carry through a release upgrade: the move
 # never rewrites a suite once written)
+# ("own": a move through the board's own entry for packages.libre.computer, which writes no source; marked at
+# step 2 and part-way while that entry is still read)
 stepped=0 ms=""
 if [ -e "$STATE/moving" ]; then
 	ms=$(cat "$STATE/moving" 2>/dev/null || true)
 	# (that suite's stanza, or the current suite's: an owner's release upgrade may have edited the stanza too)
-	if [ -f "$SRC" ] && { [ "$(suite=${ms:-$suite}; count new "$SRC")" -gt 0 ] 2>/dev/null ||
+	if [ "$ms" = own ]; then
+		[ $has_any = 1 ] && stepped=1 || rm -f "$STATE/moving"
+	elif [ -f "$SRC" ] && { [ "$(suite=${ms:-$suite}; count new "$SRC")" -gt 0 ] 2>/dev/null ||
 		[ "$(count new "$SRC")" -gt 0 ] 2>/dev/null; }; then
 		stepped=1
 	else
@@ -453,15 +461,12 @@ case $init in
 	*)
 		[ "$init" != none-and-no-systemd ] || init=none
 		if [ $stepped = 1 ]; then
-			# (nothing is finished or scheduled here. "moving" and the retry mark stay: no timer runs without
-			# systemd, and once the init is systemd again the timer step 1 enabled runs the move, which finishes it)
-			if [ -n "$old" ]; then
-				say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: $SRC holds packages.libre.computer's source beside deb.libre.computer's entries, and the renames wait until the init is systemd, when the move runs again and finishes. To stay on deb.libre.computer instead, remove $SRC and $STATE/move-pending"
-			else
-				# (every deb.libre.computer entry was in $SRC: step 1 took them out, so removing $SRC would leave
-				# the board with no Libre Computer source; the originals are in moved-sources)
-				say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: $SRC is the board's only Libre Computer source now (deb.libre.computer's entries, which it held, are kept in $STATE/moved-sources), and the renames wait until the init is systemd, when the move runs again and finishes. To stay on deb.libre.computer instead, put $SRC back from $STATE/moved-sources and remove $STATE/move-pending"
-			fi
+			# (nothing is finished here. "moving", the retry mark and the timer's link stay -- the link set again,
+			# as a removal and reinstall of the package drops it, and enabling it is only a link on disk: no
+			# timer runs without systemd -- so once the init is systemd the timer runs the move, which finishes it)
+			touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
+			timer_on
+			say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: the board reads packages.libre.computer's source, and the move and the renames wait until the init is systemd"
 			exit 0
 		fi
 		if [ -n "$old" ]; then
@@ -694,10 +699,12 @@ if [ $has_new = 0 ]; then
 	sync "$ns" "${ns%/*}" "$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
 else
 	# the board's own entry for packages.libre.computer stays the source: its files and their directories on
-	# disk too (one may be the file an earlier run renamed in and was stopped before syncing)
+	# disk too (one may be the file an earlier run renamed in and was stopped before syncing). "moving" (own):
+	# a stop in step 3 leaves a part-way move, as step 1's mark does on the other path
+	echo own > "$STATE/moving"
 	# shellcheck disable=SC2086
 	sync $newfiles $(for nf in $newfiles; do printf '%s ' "${nf%/*}"; done) \
-		"$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
+		"$STATE/migrate-pending" "$STATE/moved" "$STATE/moving" "$STATE" 2>/dev/null || sync
 fi
 
 # 3. the deb.libre.computer entries out
@@ -743,6 +750,7 @@ for f in $old; do
 done
 retry_off
 rm -f "$STATE/moving"
+sync "$STATE" 2>/dev/null || sync
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
 
 # 4. the renames need apt, which is busy until this install finishes: the timer retries until they are
