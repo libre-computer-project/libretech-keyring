@@ -41,14 +41,23 @@ say() { echo "libre-computer-archive-keyring: $*"; }
 # minutes, and it may wait for another move's lock -- so the owner may remove or purge the keyring meanwhile;
 # that removal is theirs, and the move stops there, re-creating nothing. (From the postinst of an install or
 # upgrade, dpkg holds its lock: nothing can remove the package)
+# (dpkg-reconfigure sets DEBCONF_RECONFIGURE and not DPKG_RUNNING_VERSION, which dpkg sets for every maintainer
+# script it runs: a postinst run by dpkg under a reconfigure's environment -- an install that reconfigure's own
+# postinst started -- holds dpkg's lock and is not checked.) Once this move holds the move lock, the lock file
+# must still be the one at its path: a purge deletes it with the state, and a reinstall meanwhile makes a new
+# one that another move may lock (checked where /dev/fd works)
+locked=0
 still_ours() {
 	if [ -n "${LC_MOVE_FROM_MIGRATE:-}" ]; then
-		[ -d "$STATE" ] && [ -s "$KEY" ] && return 0
-	elif [ -n "${DEBCONF_RECONFIGURE:-}" ]; then
-		[ -s "$KEY" ] && [ "$(dpkg-query -W -f '${db:Status-Status}' "$PKG" 2>/dev/null)" = installed ] && return 0
+		[ -d "$STATE" ] && [ -s "$KEY" ] || ours_gone
+	elif [ -n "${DEBCONF_RECONFIGURE:-}" ] && [ -z "${DPKG_RUNNING_VERSION:-}" ]; then
+		[ -s "$KEY" ] && [ "$(dpkg-query -W -f '${db:Status-Status}' "$PKG" 2>/dev/null)" = installed ] || ours_gone
 	else
 		return 0
 	fi
+	[ $locked = 0 ] || [ ! -e /dev/fd/9 ] || [ /dev/fd/9 -ef "$STATE/.move.lock" ] || ours_gone
+}
+ours_gone() {
 	say "the keyring was removed meanwhile; stopping, nothing more changed"
 	exit 0
 }
@@ -267,6 +276,7 @@ still_ours
 mkdir -p "$STATE"
 exec 9>"$STATE/.move.lock"
 flock 9
+locked=1
 # (and again after the wait for another move)
 still_ours
 T="" tmp=""

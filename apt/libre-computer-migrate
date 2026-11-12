@@ -16,12 +16,13 @@ set -eu
 STATE=/var/lib/libre-computer-archive-keyring
 failed=0 dpkg_broken=0
 say() { echo "libre-computer-migrate: $*"; }
-# state_here: the state directory is still there before this run writes into it again. The owner purging the
-# keyring while this run waits removes it (the postrm), and that purge is theirs: the run stops, leaving no
-# directory behind it
+# state_here: the keyring is still on the board before this run writes into its state or dpkg's again: its
+# state directory (a purge removes it, in the postrm) and its files (a remove takes them; the guard stands for
+# them). The owner removing or purging the keyring while this run waits is theirs: the run stops, leaving no
+# directory behind it and changing no mark
 state_here() {
-	[ -d "$STATE" ] && return 0
-	say "the keyring's state was removed meanwhile (the package purged); stopping"
+	[ -d "$STATE" ] && [ -e "$GUARD" ] && return 0
+	say "the keyring was removed meanwhile; stopping"
 	exit 0
 }
 [ -e "$STATE/migrate-pending" ] || [ -e "$STATE/kernel-pending" ] || [ -e "$STATE/move-pending" ] || exit 0
@@ -264,6 +265,7 @@ keep_mark() {
 	# apt-mark takes no lock: wait until no other apt or dpkg runs, so the copy is not written over by an apt
 	# that ends after it
 	idle
+	state_here
 	for p in "$@"; do
 		o=${p%%:*} n=${p#*:}
 		# the old name's mark, from this run's snapshot; or, its old name gone before this run (an earlier run
