@@ -356,6 +356,11 @@ keyring_swap() {
 		return 1
 	fi
 	record_pending libre-computer-archive-keyring
+	# (on disk, or no swap: this function runs where set -e does not stop a failed write, /var full)
+	if [ ! -s "$STATE/pending-libre-computer-archive-keyring" ]; then
+		say "could not record the keyring's rename (is /var full?); will retry"
+		return 1
+	fi
 	run_begin
 	if dpkg --auto-deconfigure --force-confold --force-confdef -i "$1" >"$W/out" 2>&1; then
 		run_end

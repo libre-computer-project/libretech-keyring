@@ -1068,5 +1068,17 @@ install_keyring
 check "S76: stays on deb.libre.computer, says why, nothing pending" bash -c "test -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test ! -e '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test ! -e '$mnt$S/migrate-pending' && grep -q 'kernel channel packages.libre.computer does not carry' '$W/dpkg.log'"
 cleanup
 
+echo "== S77: a move stopped after step 1 on bookworm, the board upgraded to trixie before the next run: step 2 still finishes"
+setup
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: bookworm\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+mkdir -p "$mnt$S"
+echo bookworm > "$mnt$S/moving"
+touch "$mnt$S/move-pending"
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s77.log" 2>&1
+check "S77: the migration pending, the marks cleared" bash -c "test -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/moving' && test ! -e '$mnt$S/move-pending' && grep -q 'cut short after its new source went in' '$W/s77.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

@@ -387,9 +387,12 @@ retry_off() { rm -f "$STATE/move-pending"; }
 # (only with the new stanza in libre-computer.sources itself, the file step 1 writes: a mark a run stopped
 # before its rename left, the old file still in place, claims nothing and goes, whatever entry of the owner's
 # names packages.libre.computer elsewhere)
+# (the stanza for the suite the mark names, which that run wrote: the owner may have upgraded the board to another
+# release since; a mark that names none, from an older version, means this run's suite)
 stepped=0
 if [ -e "$STATE/moving" ]; then
-	if [ -f "$SRC" ] && [ "$(count new "$SRC")" -gt 0 ] 2>/dev/null; then
+	ms=$(cat "$STATE/moving" 2>/dev/null || true)
+	if [ -f "$SRC" ] && [ "$(suite=${ms:-$suite}; count new "$SRC")" -gt 0 ] 2>/dev/null; then
 		stepped=1
 	else
 		rm -f "$STATE/moving"
@@ -624,7 +627,8 @@ if [ $has_new = 0 ]; then
 	# on disk first; then kind, on disk too, so a record whose kind is there is whole. $STATE as well: the
 	# entries of sources-check and move-pending, which may be on another filesystem than the source
 	# ("moving" too: see where it is read, after the scan for old entries)
-	: > "$STATE/moving"
+	# (the suite it writes: the board may move to another release before a run finds the mark)
+	echo "$suite" > "$STATE/moving"
 	sync "$C/before.log" "$C/path" "$C/backup" "$C" "$tmp" ${src_backup:+"$src_backup"} \
 		${src_link:+"$src_link"} "$STATE/moved-sources" "$STATE/moving" "$STATE" 2>/dev/null || sync
 	echo "$kind" > "$C/kind"
