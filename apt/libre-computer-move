@@ -430,18 +430,29 @@ unmoved() {
 # never rewrites a suite once written)
 # ("own": a move through the board's own entry for packages.libre.computer, which writes no source; marked at
 # step 2 and part-way while that entry is still read)
+# The mark holds every suite (and "own") the part-way move has marked, a run that redoes step 1 adding its own:
+# a stop between that run's mark and its rename leaves the earlier stanza, which an earlier word still names.
+# Part-way when any word still holds -- "own" with a packages.libre.computer entry read, a suite with its stanza
+# in libre-computer.sources -- or libre-computer.sources holds the current suite's stanza (an owner's release
+# upgrade may have edited it); an empty mark means the current suite
+# mark_moving WORD: WORD added to the mark (the words already there, which this run found still holding, kept),
+# through a copy renamed over it: a stop never leaves it empty or half-written (the caller syncs it)
+mark_moving() {
+	printf '%s\n' "$(echo $ms $1)" > "$STATE/moving.new"
+	sync "$STATE/moving.new" 2>/dev/null || sync
+	mv -f "$STATE/moving.new" "$STATE/moving"
+}
 stepped=0 ms=""
 if [ -e "$STATE/moving" ]; then
 	ms=$(cat "$STATE/moving" 2>/dev/null || true)
-	# (that suite's stanza, or the current suite's: an owner's release upgrade may have edited the stanza too)
-	if [ "$ms" = own ]; then
-		[ $has_any = 1 ] && stepped=1 || rm -f "$STATE/moving"
-	elif [ -f "$SRC" ] && { [ "$(suite=${ms:-$suite}; count new "$SRC")" -gt 0 ] 2>/dev/null ||
-		[ "$(count new "$SRC")" -gt 0 ] 2>/dev/null; }; then
-		stepped=1
-	else
-		rm -f "$STATE/moving"
-	fi
+	for mw in $ms ""; do
+		case $mw in
+			own) [ $has_any = 0 ] || stepped=1 ;;
+			# (a count awk could not make counts as none)
+			*) if [ -f "$SRC" ] && [ "$(suite=${mw:-$suite}; count new "$SRC")" -gt 0 ] 2>/dev/null; then stepped=1; fi ;;
+		esac
+	done
+	[ $stepped = 1 ] || { rm -f "$STATE/moving"; ms=""; }
 fi
 # the renames are run by a systemd timer: a board whose init is not systemd (sysvinit-core, openrc) would be
 # moved with nothing ever to rename its packages, so it stays. Read from /sbin/init, not from a running
@@ -490,7 +501,7 @@ if [ -z "$old" ] && [ $stepped = 1 ]; then
 	timer_on
 	say "the move to packages.libre.computer was cut short after its new source went in; the renames are now pending"
 fi
-[ -n "$old" ] || { retry_off; exit 0; }
+[ -n "$old" ] || { retry_off; unmoved; exit 0; }
 
 [ -n "$suite" ] || stay "this release (${ID:-unknown} ${VERSION_CODENAME:-unknown}) is not served by packages.libre.computer"
 
@@ -680,7 +691,7 @@ if [ $has_new = 0 ]; then
 	# run's mark, a part-way move this run redoes, is kept in the record for an undo to put back)
 	cm=""
 	[ ! -e "$STATE/moving" ] || { cp "$STATE/moving" "$C/moving"; cm=$C/moving; }
-	echo "$suite" > "$STATE/moving"
+	mark_moving "$suite"
 	sync "$C/before.log" "$C/path" "$C/backup" ${cm:+"$cm"} "$C" "$tmp" ${src_backup:+"$src_backup"} \
 		${src_link:+"$src_link"} "$STATE/moved-sources" "$STATE/moving" "$STATE" 2>/dev/null || sync
 	echo "$kind" > "$C/kind"
@@ -708,7 +719,7 @@ else
 	# the board's own entry for packages.libre.computer stays the source: its files and their directories on
 	# disk too (one may be the file an earlier run renamed in and was stopped before syncing). "moving" (own):
 	# a stop in step 3 leaves a part-way move, as step 1's mark does on the other path
-	echo own > "$STATE/moving"
+	mark_moving own
 	# shellcheck disable=SC2086
 	sync $newfiles $(for nf in $newfiles; do printf '%s ' "${nf%/*}"; done) \
 		"$STATE/migrate-pending" "$STATE/moved" "$STATE/moving" "$STATE" 2>/dev/null || sync
