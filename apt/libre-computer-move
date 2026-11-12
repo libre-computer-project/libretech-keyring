@@ -355,8 +355,11 @@ unreadable() { # LOG: say so, and the previous source back (its copy, now the fi
 	# (step 1 undone: this run moved nothing, so "moving" is what it was before -- an earlier run's part-way move,
 	# whose stanza the undo has put back, or none)
 	if [ -e "$C/moving" ]; then
-		cp "$C/moving" "$STATE/moving"
-		sync "$STATE/moving" 2>/dev/null || sync
+		# (through a synced copy renamed over it, as mark_moving writes it: a stop never leaves it half-written)
+		cp "$C/moving" "$STATE/moving.new"
+		sync "$STATE/moving.new" 2>/dev/null || sync
+		mv -f "$STATE/moving.new" "$STATE/moving"
+		sync "$STATE" 2>/dev/null || sync
 	else
 		rm -f "$STATE/moving"
 	fi
@@ -507,14 +510,16 @@ fi
 
 # a kernel channel packages.libre.computer does not carry keeps the board on the frozen repo (its meta-package in
 # any state but removed: one a failed kernel upgrade left unpacked still names the channel)
-others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 2>/dev/null |
-	awk '$1 != "not-installed" && $1 != "config-files" {print $2}' |
-	grep -E '^linux-image-lc-.+-(arm64|arm|armhf|amd64)$' |
-	grep -vE '^linux-image-lc-lts-(arm64|arm|armhf|amd64)$' || true)
-if [ -n "$others" ]; then
+# (checked again after the probes: a move holding no dpkg lock can meet an owner's kernel install meanwhile)
+kernel_channel() {
+	others=$(dpkg-query -W -f '${db:Status-Status} ${Package}\n' 'linux-image-lc-*' 2>/dev/null |
+		awk '$1 != "not-installed" && $1 != "config-files" {print $2}' |
+		grep -E '^linux-image-lc-.+-(arm64|arm|armhf|amd64)$' |
+		grep -vE '^linux-image-lc-lts-(arm64|arm|armhf|amd64)$' || true)
 	# (stepped: also until the channel is lc-lts again, when the move finishes)
-	stay "this board follows a kernel channel packages.libre.computer does not carry ($(echo $others))"
-fi
+	[ -z "$others" ] || stay "this board follows a kernel channel packages.libre.computer does not carry ($(echo $others))"
+}
+kernel_channel
 # a directory where the new source would go: it cannot take its name (a stay like the others, before any mark
 # is set)
 [ $has_new = 1 ] || [ ! -d "$SRC" ] || stay "$SRC is a directory; the new source cannot take its name"
@@ -593,6 +598,7 @@ if [ $has_new = 1 ]; then
 fi
 
 still_ours
+kernel_channel
 mkdir -p "$STATE/moved-sources"
 stamp=$(date +%Y%m%d%H%M%S)
 backup() { # FILE: the path its original is kept at, never one already taken
