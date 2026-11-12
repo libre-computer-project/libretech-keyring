@@ -803,11 +803,12 @@ setup
 install_keyring
 cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
 in_root apt-get -q update > "$W/s54.log" 2>&1
-G=/usr/lib/libre-computer-archive-keyring/libre-computer-rename-guard
+# (its own name: G is the throwaway key's gpg home, which later repositories are signed with)
+RG=/usr/lib/libre-computer-archive-keyring/libre-computer-rename-guard
 guarded() { # ALLOW APT-ARGS...
 	local allow=$1; shift
 	chroot "$mnt" env LC_RENAME_ALLOW="$allow" DEBIAN_FRONTEND=noninteractive apt-get -q -y --no-install-recommends \
-		-o "DPkg::Pre-Install-Pkgs::=$G" -o "DPkg::Tools::Options::$G::Version=2" "$@" >> "$W/s54.log" 2>&1
+		-o "DPkg::Pre-Install-Pkgs::=$RG" -o "DPkg::Tools::Options::$RG::Version=2" "$@" >> "$W/s54.log" 2>&1
 }
 # (installing libre-computer-gpio takes libretech-gpio and libretech-dtoverlay, which depends on it)
 guarded " " install libre-computer-gpio
