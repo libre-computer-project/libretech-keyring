@@ -88,8 +88,13 @@ never_began() {
 # never configure beside it; the owner's transitional libretech-keyring of the same version is not excepted)
 except() {
 	[ "$(st libre-computer-archive-keyring)" = installed ] || return 0
-	ov=$(dpkg-query -W -f '${Version}' libretech-keyring 2>/dev/null) || return 0
-	nv=$(dpkg-query -W -f '${Version}' libre-computer-archive-keyring 2>/dev/null) || return 0
+	# (each the version of an instance on the board: one line per instance dpkg knows, a selection-only record of
+	# another architecture included)
+	ov=$(dpkg-query -W -f '${db:Status-Status} ${Version}\n' libretech-keyring 2>/dev/null |
+		awk '$1 != "not-installed" && $1 != "config-files" { print $2; exit }') || return 0
+	nv=$(dpkg-query -W -f '${db:Status-Status} ${Version}\n' libre-computer-archive-keyring 2>/dev/null |
+		awk '$1 != "not-installed" && $1 != "config-files" { print $2; exit }') || return 0
+	[ -n "$nv" ] || return 0
 	[ -z "$ov" ] || ! dpkg --compare-versions "$ov" lt "$nv" || echo libretech-keyring
 }
 # partdone [EXTRA...]: " NAME..." of the packages dpkg holds part-done (unpacked, half-installed,
