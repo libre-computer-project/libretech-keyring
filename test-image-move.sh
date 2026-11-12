@@ -166,7 +166,9 @@ else
 	check "4: moved to packages.libre.computer, suite $expect" bash -c "test ! -e '$lclist' && grep -qx 'URIs: file:///srv/test-repo' '$src' && grep -qx 'Suites: $expect' '$src'"
 	check "4: the migration is pending" test -e "$state/migrate-pending"
 	cp "$W/test-key.gpg" "$mnt/usr/share/keyrings/libre-computer-deb.gpg"
-	in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/5-migrate.log" 2>&1
+	# (the stand-in repository's URI: the keyring swap's postinst runs the move, which must recognise the board's source)
+	in_root env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo/test-key.gpg \
+		/usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/5-migrate.log" 2>&1
 	grep -h '^libre-computer-migrate:' "$W/5-migrate.log" | sed 's/^/   /'
 	check "5: the migration finishes" grep -q 'done: the board reads packages.libre.computer' "$W/5-migrate.log"
 	grep -q 'done: the board reads packages.libre.computer' "$W/5-migrate.log" ||
@@ -186,8 +188,14 @@ else
 		# know the board's source for what it wrote)
 		in_root env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo/test-key.gpg DEBIAN_FRONTEND=noninteractive apt-get -y -q --with-new-pkgs upgrade > "$W/6-upgrade.log" 2>&1
 		check "6: the owner's upgrade brings linux-image-lc-lts-armhf through the transitional -arm" bash -c "$(declare -f installed); mnt='$mnt'; installed linux-image-lc-lts-armhf"
-		in_root /usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/7-migrate.log" 2>&1
+		in_root env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo/test-key.gpg \
+			/usr/lib/libre-computer-archive-keyring/libre-computer-migrate > "$W/7-migrate.log" 2>&1
 		check "7: the timer's next run removes linux-image-lc-lts-arm, nothing pending" bash -c "$(declare -f installed); mnt='$mnt'; ! installed linux-image-lc-lts-arm && test ! -e '$state/kernel-pending'"
+		if installed linux-image-lc-lts-arm || [[ -e $state/kernel-pending ]]; then
+			echo "   -- the state: $(ls "$state" 2>&1 | tr '\n' ' ')"
+			echo "   -- the upgrade's keyring lines:"; grep -E 'libre-computer|libretech' "$W/6-upgrade.log" | tail -n 20 | sed 's/^/   | /'
+			echo "   -- the migration's last lines:"; tail -n 20 "$W/7-migrate.log" | sed 's/^/   | /'
+		fi
 		check "7: autoremove keeps linux-image-lc-lts-armhf" bash -c "! chroot '$mnt' apt-get -s autoremove 2>/dev/null | grep -q '^Remv linux-image-lc-lts-armhf '"
 	fi
 	check "5: dpkg --audit says nothing" bash -c "[[ -z \$(chroot '$mnt' dpkg --audit) ]]"
