@@ -165,7 +165,7 @@ list_awk() { # MODE FILE
 # frozen repo is taken out of it counts: the stanza stays a source); disable: the file with the frozen repo taken out of each
 # enabled stanza (the stanza disabled when it named nothing else, its other URIs kept when it did)
 sources_awk() { # MODE FILE
-	awk -v mode="$1" -v new="$URIN" -v suite="$suite" '
+	awk -v mode="$1" -v new="$URIN" -v suite="$suite" -v stale="${stale:-}" '
 		# (a path naming it first -- a caching proxy, or a local mirror of the frozen repo -- counts too)
 		# the path after a caching proxy host, its HTTPS/// (the apt-cacher-ng form for an https repo) taken off
 		# (the host it names in any case, the path as written: paths on a server are case-sensitive)
@@ -193,7 +193,7 @@ sources_awk() { # MODE FILE
 		}
 		# the new repository, directly or through a caching proxy whose path names it first
 		function isnew(u) { return norm(u) == new || proxied(u) == new }
-		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd, hn) {
+		function flush(   k, t, ntok, keep, libre, oth, mine, hs, hd, hn, nn, hst, own) {
 			if (n == 0) return
 			# Enabled: the whole field, continuation lines included; false as apt reads it
 			if (ev != "") {
@@ -208,17 +208,22 @@ sources_awk() { # MODE FILE
 				else { oth = 1; keep = keep " " t[k] }
 			}
 			mine = libre && !off
-			if (mode == "ours" && mine) c++
-			if (mode == "other" && (oth || (off && libre) || cent)) c++
-			hs = 0
+			hs = 0; hst = 0
 			ntok = split(suites, t, /[[:space:]]+/)
-			for (k = 1; k <= ntok; k++) if (t[k] == suite) hs = 1
+			for (k = 1; k <= ntok; k++) { if (t[k] == suite) hs = 1; if (stale != "" && t[k] == stale) hst = 1 }
 			hd = 0
 			ntok = split(types, t, /[[:space:]]+/)
 			for (k = 1; k <= ntok; k++) if (t[k] == "deb") hd = 1
-			hn = 0
+			hn = 0; nn = 0
 			ntok = split(v, t, /[[:space:]]+/)
-			for (k = 1; k <= ntok; k++) if (t[k] != "" && isnew(t[k])) hn = 1
+			for (k = 1; k <= ntok; k++) if (t[k] != "") { if (isnew(t[k])) hn = 1; else nn = 1 }
+			# own: the stanza an earlier, cut-short step 1 wrote for the suite the board has since left
+			# (packages.libre.computer alone, that suite, enabled, no comment in it): replaced, never counted as
+			# content of the owner
+			own = stale != "" && !off && hn && !nn && hst && !hs && hd && !cent
+			if (mode == "ours" && mine) c++
+			if (mode == "other" && !own && (oth || (off && libre) || cent)) c++
+			if (mode == "disable" && own) { n = 0; uris = ""; suites = ""; types = ""; off = 0; field = ""; cent = 0; ev = ""; split("", isuri); split("", isen); return }
 			if (mode == "new" && !off && hn && hs && hd) c++
 			if (mode == "pick" && !off && hn && hs && hd) { for (k = 1; k <= n; k++) print line[k]; print "" }
 			if (mode == "disable") {
@@ -389,11 +394,16 @@ retry_off() { rm -f "$STATE/move-pending"; }
 # names packages.libre.computer elsewhere)
 # (the stanza for the suite the mark names, which that run wrote: the owner may have upgraded the board to another
 # release since; a mark that names none, from an older version, means this run's suite)
-stepped=0
+stepped=0 ms="" stale=""
 if [ -e "$STATE/moving" ]; then
 	ms=$(cat "$STATE/moving" 2>/dev/null || true)
-	if [ -f "$SRC" ] && [ "$(suite=${ms:-$suite}; count new "$SRC")" -gt 0 ] 2>/dev/null; then
+	# (that suite's stanza, or the current suite's: an owner's release upgrade may have edited the stanza too)
+	if [ -f "$SRC" ] && { [ "$(suite=${ms:-$suite}; count new "$SRC")" -gt 0 ] 2>/dev/null ||
+		[ "$(count new "$SRC")" -gt 0 ] 2>/dev/null; }; then
 		stepped=1
+		# the stanza that run wrote for a suite the board has since left: step 1 below replaces it with this
+		# suite's (sources_awk drops it, and does not count it as the owner's)
+		[ -z "$ms" ] || [ "$ms" = "$suite" ] || stale=$ms
 	else
 		rm -f "$STATE/moving"
 	fi
@@ -409,7 +419,8 @@ fi
 
 if [ -z "$suite" ]; then
 	say "this release (${ID:-unknown} ${VERSION_CODENAME:-unknown}) is not served by packages.libre.computer; staying on deb.libre.computer"
-	retry_off
+	# (a move part-way keeps its retry mark, as for another kernel channel)
+	[ $stepped = 1 ] || retry_off
 	exit 0
 fi
 

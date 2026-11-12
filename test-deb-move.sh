@@ -1080,5 +1080,28 @@ in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s77.log"
 check "S77: the migration pending, the marks cleared" bash -c "test -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/moving' && test ! -e '$mnt$S/move-pending' && grep -q 'cut short after its new source went in' '$W/s77.log'"
 cleanup
 
+echo "== S78: the same stop and upgrade, the owner's release upgrade having edited the stanza: step 2 still finishes"
+setup
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+mkdir -p "$mnt$S"
+echo bookworm > "$mnt$S/moving"
+touch "$mnt$S/move-pending"
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s78.log" 2>&1
+check "S78: the migration pending, the marks cleared" bash -c "test -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/moving' && test ! -e '$mnt$S/move-pending'"
+cleanup
+
+echo "== S79: the stop on bookworm, the upgrade to trixie, a deb.libre.computer entry left elsewhere: the bookworm stanza is replaced"
+setup
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: bookworm\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+mkdir -p "$mnt$S"
+echo bookworm > "$mnt$S/moving"
+touch "$mnt$S/move-pending"
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+in_root env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo/test-key.gpg sh /tmp/lc-move > "$W/s79.log" 2>&1
+check "S79: moved, trixie's stanza in and bookworm's gone" bash -c "grep -qx 'Suites: trixie' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && ! grep -q 'bookworm' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
