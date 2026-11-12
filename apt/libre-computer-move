@@ -283,7 +283,7 @@ esac
 # one move at a time (the timer's run and a dpkg-reconfigure or a keyring upgrade can meet): the second waits,
 # then finds the board moved and has nothing to do
 still_ours
-mkdir -p "$STATE"
+mkdir -p "$STATE"; sync "$STATE" "${STATE%/*}" 2>/dev/null || sync
 exec 9>"$STATE/.move.lock"
 flock 9
 locked=1
@@ -446,7 +446,7 @@ case $init in
 		if [ $stepped = 1 ]; then
 			# (nothing is finished or scheduled here. "moving" and the retry mark stay: no timer runs without
 			# systemd, and once the init is systemd again the timer step 1 enabled runs the move, which finishes it)
-			say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: $SRC holds packages.libre.computer's source, and the renames wait until the init is systemd. Removing $SRC returns the board to deb.libre.computer"
+			say "this board's init ($init) is not systemd, which runs the renames, so the move cut short earlier is not finished: $SRC holds packages.libre.computer's source, and the renames wait until the init is systemd, when the move runs again and finishes. To stay on deb.libre.computer instead, remove $SRC and $STATE/move-pending"
 			exit 0
 		fi
 		if [ -n "$old" ]; then
@@ -515,7 +515,7 @@ if [ $has_new = 0 ]; then
 		grep -E '^(E|W|Err):' "$T/probe.log" | sed 's/^/  /' || true
 		# a network or clock fault at upgrade time must not leave the board on the frozen repo for good
 		still_ours
-		mkdir -p "$STATE"
+		mkdir -p "$STATE"; sync "$STATE" "${STATE%/*}" 2>/dev/null || sync
 		touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
 		timer_on
 		exit 0
@@ -549,7 +549,7 @@ if [ $has_new = 1 ]; then
 		say "the board's own entry for packages.libre.computer is not usable (its key, or the network); staying on deb.libre.computer for now, and trying again every 6 hours. apt said:"
 		grep -E '^(E|W|Err):' "$T/own.log" | sed 's/^/  /' || true
 		still_ours
-		mkdir -p "$STATE"
+		mkdir -p "$STATE"; sync "$STATE" "${STATE%/*}" 2>/dev/null || sync
 		touch "$STATE/move-pending" || exit 1; sync "$STATE/move-pending" "$STATE" 2>/dev/null || sync
 		timer_on
 		exit 0
