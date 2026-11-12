@@ -1103,5 +1103,18 @@ in_root env LC_PACKAGES_URI=file:///srv/test-repo LC_PACKAGES_KEY=/srv/test-repo
 check "S79: moved, trixie's stanza added, bookworm's kept, the migration pending" bash -c "grep -qx 'Suites: trixie' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Suites: bookworm' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && test -e '$mnt$S/migrate-pending' && test ! -s '$mnt/etc/apt/sources.list.d/libre-computer-deb.list'"
 cleanup
 
+echo "== S80: a move cut short after step 1, the init no longer systemd: no migration scheduled that could not run"
+setup
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+mkdir -p "$mnt$S"
+echo trixie > "$mnt$S/moving"
+touch "$mnt$S/move-pending"
+ln -sfn /bin/true "$mnt/sbin/init"
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s80.log" 2>&1
+check "S80: nothing pending, the mark kept for a later run, and said why" bash -c "test ! -e '$mnt$S/migrate-pending' && test ! -e '$mnt$S/move-pending' && test -e '$mnt$S/moving' && grep -q 'renames will not run' '$W/s80.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
