@@ -248,9 +248,10 @@ newtmp() { # PATH [name]: tmp set to a fresh name beside PATH, listed, then crea
 }
 if [ -s "$TEMPS" ]; then
 	while IFS= read -r t; do
-		case $t in *.libre-computer-move.??????) rm -f "$t" ;; esac
+		case $t in *.libre-computer-move.??????) rm -f "$t"; sync "${t%/*}" 2>/dev/null || sync ;; esac
 	done < "$TEMPS"
 fi
+# (each removal on disk, its directory synced, before the list that names it goes)
 rm -f "$TEMPS"
 
 # step 1 below puts the new source in place, then asks apt whether it can still read the sources, and puts the
@@ -291,6 +292,8 @@ say_unreadable() { # LOG
 unreadable() { # LOG: say so, and the previous source back (its copy, now the file again, not kept twice)
 	undo_src "$(cat "$C/kind")" "$(cat "$C/backup")" "$(cat "$C/path")"
 	[ ! -s "$C/backup" ] || rm -f "$(cat "$C/backup")"
+	# (step 1 undone: nothing moved, so no "moving" for a later run to finish)
+	rm -f "$STATE/moving"
 	rm -rf "$C"
 	say_unreadable "$1"
 	exit 0
@@ -316,6 +319,18 @@ for f in "$SL" "$SP"/*.list "$SP"/*.sources; do
 done
 # move-pending: a move the timer retries (packages.libre.computer was not usable at the last try)
 retry_off() { rm -f "$STATE/move-pending"; }
+# "moving": step 1 below wrote the new source over libre-computer.sources (written, synced, before the rename;
+# gone once step 3 is done). A run stopped after that rename and before step 2's marks were on disk leaves a
+# board with no deb.libre.computer entry left -- every one was in that file -- and nothing scheduled: so a run
+# that finds nothing to move, with the mark still there, finishes step 2 (the migration pending, its timer on)
+if [ -z "$old" ] && [ -e "$STATE/moving" ]; then
+	touch "$STATE/migrate-pending" "$STATE/moved"
+	sync "$STATE/migrate-pending" "$STATE/moved" "$STATE" 2>/dev/null || sync
+	rm -f "$STATE/moving"
+	systemctl enable libre-computer-migrate.timer >/dev/null 2>&1 || true
+	[ ! -d /run/systemd/system ] || systemctl start --no-block libre-computer-migrate.timer >/dev/null 2>&1 || true
+	say "the move to packages.libre.computer was cut short after its new source went in; the renames are now pending"
+fi
 [ -n "$old" ] || { retry_off; exit 0; }
 
 if [ -z "$suite" ]; then
@@ -508,8 +523,10 @@ if [ $has_new = 0 ]; then
 	# the rest of the record, the copy of the previous file (what an undo puts back) and the new file's content
 	# on disk first; then kind, on disk too, so a record whose kind is there is whole. $STATE as well: the
 	# entries of sources-check and move-pending, which may be on another filesystem than the source
+	# ("moving" too: see where it is read, after the scan for old entries)
+	: > "$STATE/moving"
 	sync "$C/before.log" "$C/path" "$C/backup" "$C" "$tmp" ${src_backup:+"$src_backup"} \
-		${src_link:+"$src_link"} "$STATE/moved-sources" "$STATE" 2>/dev/null || sync
+		${src_link:+"$src_link"} "$STATE/moved-sources" "$STATE/moving" "$STATE" 2>/dev/null || sync
 	echo "$kind" > "$C/kind"
 	sync "$C/kind" "$C" 2>/dev/null || sync
 	# then the rename: a power loss finds the old file or the new one whole, never an empty one
@@ -581,6 +598,7 @@ for f in $old; do
 	sync "${real%/*}" 2>/dev/null || sync
 done
 retry_off
+rm -f "$STATE/moving"
 say "moved to packages.libre.computer ($suite); the old source files are in $STATE/moved-sources"
 
 # 4. the renames need apt, which is busy until this install finishes: the timer retries until they are

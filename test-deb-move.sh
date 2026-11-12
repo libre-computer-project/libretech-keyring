@@ -980,5 +980,17 @@ migrate s67.log
 check "S67: the old meta gone, the new one in and manual (as the old one was), nothing pending for the kernel" bash -c "$(declare -f installed); mnt='$mnt'; ! chroot '$mnt' dpkg-query -W -f '\${db:Status-Status}' linux-image-lc-lts-arm 2>/dev/null | grep -qvx 'not-installed\|config-files' && installed linux-image-lc-lts-armhf && chroot '$mnt' apt-mark showmanual | grep -qx linux-image-lc-lts-armhf && test ! -e '$mnt$S/kernel-pending'"
 cleanup
 
+echo "== S68: a move stopped after step 1 rewrote libre-computer.sources (it held every old entry), before step 2's marks"
+setup
+rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
+# what the stopped run left: the new stanza in place, its moving mark and retry mark, no migration marks
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+mkdir -p "$mnt$S"
+touch "$mnt$S/moving" "$mnt$S/move-pending"
+dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
+in_root env LC_PACKAGES_URI=file:///srv/test-repo sh /tmp/lc-move > "$W/s68.log" 2>&1
+check "S68: the next run finishes step 2: the migration pending and the board moved, the marks cleared" bash -c "test -e '$mnt$S/migrate-pending' && test -e '$mnt$S/moved' && test ! -e '$mnt$S/moving' && test ! -e '$mnt$S/move-pending' && grep -q 'cut short after its new source went in' '$W/s68.log'"
+cleanup
+
 echo "test-deb-move: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
