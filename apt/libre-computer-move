@@ -51,11 +51,20 @@ still_ours() {
 	if [ -n "${LC_MOVE_FROM_MIGRATE:-}" ]; then
 		[ -d "$STATE" ] && [ -s "$KEY" ] || ours_gone
 	elif [ -n "${DEBCONF_RECONFIGURE:-}" ] && [ -z "${DPKG_RUNNING_VERSION:-}" ]; then
-		[ -s "$KEY" ] && [ "$(dpkg-query -W -f '${db:Status-Status}' "$PKG" 2>/dev/null)" = installed ] || ours_gone
+		# (the package still on the board: installed, or left part-configured -- dpkg-reconfigure --force runs
+		# the postinst of one a power loss cut short)
+		case $(dpkg-query -W -f '${db:Status-Status}' "$PKG" 2>/dev/null) in
+			installed|half-configured|unpacked|triggers-awaited|triggers-pending) [ -s "$KEY" ] || ours_gone ;;
+			*) ours_gone ;;
+		esac
 	else
 		return 0
 	fi
-	[ $locked = 0 ] || [ ! -e /dev/fd/9 ] || [ /dev/fd/9 -ef "$STATE/.move.lock" ] || ours_gone
+	[ $locked = 0 ] && return 0
+	# (/dev/fd, or /proc's own view of it where /dev/fd is missing; neither there: a root with no /proc)
+	fd9=/dev/fd/9
+	[ -e "$fd9" ] || fd9=/proc/self/fd/9
+	[ ! -e "$fd9" ] || [ "$fd9" -ef "$STATE/.move.lock" ] || ours_gone
 }
 ours_gone() {
 	say "the keyring was removed meanwhile; stopping, nothing more changed"
