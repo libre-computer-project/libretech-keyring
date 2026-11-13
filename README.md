@@ -14,7 +14,8 @@ package below is built from it.
 a host (rpm keeps an imported key, so `libre-computer-release` deletes the stored copy before importing; pacman
 loads the keyring with `pacman-key --populate libre-computer`). The Fedora package installs the repo definition;
 the pacman package cannot (pacman has no `conf.d`), so on install it prints the stanza to add to
-`/etc/pacman.conf`, with `SigLevel = Required` (pacman's default would take an unsigned database). The builds need `rpmbuild`, `makepkg`,
+`/etc/pacman.conf`, above `[core]` (so our Mesa's `replaces=` takes over from Arch's), with `SigLevel = Required`
+(pacman's default would take an unsigned database). The builds need `rpmbuild`, `makepkg`,
 `bsdtar` and `gpg`.
 
 **Moving a board off deb.libre.computer.** `libre-computer-archive-keyring`'s postinst runs

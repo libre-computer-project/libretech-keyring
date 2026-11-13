@@ -12,13 +12,15 @@ post_install() {
 	fi
 	# pacman has no conf.d and a package does not edit pacman.conf: the repo stanza is the administrator's to
 	# add. SigLevel = Required: pacman's default (Required DatabaseOptional) would take an unsigned database.
+	# Above [core]: a sysupgrade takes each package from the first repo that has it, so only there do our
+	# packages' replaces= (Mesa) take over from the distribution's.
 	cat <<'EOF'
-==> To use the Libre Computer repository, add to /etc/pacman.conf:
+==> To use the Libre Computer repository, add to /etc/pacman.conf, above [core]:
 
     [libre-computer]
     SigLevel = Required
     Server = https://packages.libre.computer/arch/$repo/os/$arch
 
-    then: pacman -Sy
+    then: pacman -Syu
 EOF
 }
