@@ -53,10 +53,11 @@ cp "$PKG_ROOT/packaging/rpm/libre-computer-release.spec" "$T/rpm/SPECS/"
 log "building libre-computer-release $version${suse:+ for openSUSE $suse} from $(source_commit), key $(key_fpr "$T/gnupg")"
 # _buildhost: the header names the published host, never the machine that built it
 suse_def=()
-[[ -z $suse ]] || suse_def=(--define "lc_opensuse 1")
+# (dist only for openSUSE: rpm refuses a macro with an empty body)
+[[ -z $suse ]] || suse_def=(--define "lc_opensuse 1" --define "dist $dist")
 rpmbuild --define "_topdir $T/rpm" --define "_buildhost deb.libre.computer" \
 	--define "lc_version $version" --define "lc_keyid $(key_rpm_id "$T/gnupg")" \
-	"${suse_def[@]}" --define "dist $dist" \
+	"${suse_def[@]}" \
 	-bb "$T/rpm/SPECS/libre-computer-release.spec" >"$T/rpmbuild.log" 2>&1 ||
 	{ tail -20 "$T/rpmbuild.log" >&2; die "rpmbuild failed"; }
 cp "$T"/rpm/RPMS/noarch/libre-computer-release-"$version"-1"$dist".noarch.rpm "$out/"
