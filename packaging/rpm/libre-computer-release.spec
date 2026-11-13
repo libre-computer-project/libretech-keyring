@@ -3,7 +3,7 @@
 # sources in SOURCES.
 Name:           libre-computer-release
 Version:        %{lc_version}
-Release:        1
+Release:        1%{?dist}
 Summary:        Libre Computer package repository and signing key
 # the repository carries no license file yet; the operator names one
 License:        LicenseRef-Not-Specified
@@ -17,12 +17,17 @@ Obsoletes:      libre-computer-repos < %{version}-%{release}
 Provides:       libre-computer-repos = %{version}-%{release}
 
 %description
-The dnf repository definition for https://packages.libre.computer/rpm and the OpenPGP key that
-signs its packages and repository metadata.
+The dnf (Fedora) or zypper (openSUSE) repository definition for https://packages.libre.computer/rpm
+and the OpenPGP key that signs its packages and repository metadata.
 
 %install
 install -Dpm 0644 %{SOURCE0} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-libre-computer
+%if 0%{?lc_opensuse}
+# (openSUSE: zypper's repository directory; build-rpm.sh --opensuse wrote the release's baseurl into it)
+install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/zypp/repos.d/libre-computer.repo
+%else
 install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/yum.repos.d/libre-computer.repo
+%endif
 
 %posttrans
 # rpm keeps a key it has already imported: importing a renewed key (same id, new expiry) is a no-op,
@@ -32,4 +37,8 @@ rpmkeys --import %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-libre-computer >/dev/nul
 
 %files
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-libre-computer
+%if 0%{?lc_opensuse}
+%config(noreplace) %{_sysconfdir}/zypp/repos.d/libre-computer.repo
+%else
 %config(noreplace) %{_sysconfdir}/yum.repos.d/libre-computer.repo
+%endif
