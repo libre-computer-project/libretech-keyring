@@ -40,7 +40,8 @@ key_binary "$T/gnupg" >"$T/build/libre-computer.gpg"
 printf '%s:4:\n' "$fpr" >"$T/build/libre-computer-trusted"
 : >"$T/build/libre-computer-revoked"
 for r in "${REVOKED[@]}"; do printf '%s\n' "$r" >>"$T/build/libre-computer-revoked"; done
-cp "$PKG_ROOT/packaging/arch/PKGBUILD" "$PKG_ROOT/packaging/arch/libre-computer-keyring.install" "$T/build/"
+cp "$PKG_ROOT/packaging/arch/PKGBUILD" "$PKG_ROOT/packaging/arch/libre-computer-keyring.install" \
+	"$PKG_ROOT/LICENSE" "$T/build/"
 
 log "building libre-computer-keyring $version from $(source_commit), key $fpr"
 (cd "$T/build" && LC_VERSION=$version PKGEXT=.pkg.tar.zst makepkg --nodeps --noconfirm --skipinteg) \

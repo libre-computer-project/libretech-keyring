@@ -1,16 +1,16 @@
 # libre-computer-release -- the Libre Computer dnf repository and the OpenPGP key that signs it (Fedora: the
-# third-party `<vendor>-release` form). Built by build-rpm.sh, which defines lc_version and lc_keyid and puts both
+# third-party `<vendor>-release` form). Built by build-rpm.sh, which defines lc_version and lc_keyid and puts the
 # sources in SOURCES.
 Name:           libre-computer-release
 Version:        %{lc_version}
 Release:        1%{?dist}
 Summary:        Libre Computer package repository and signing key
-# the repository carries no license file yet; the operator names one
-License:        LicenseRef-Not-Specified
+License:        MIT
 URL:            https://packages.libre.computer/
 BuildArch:      noarch
 Source0:        RPM-GPG-KEY-libre-computer
 Source1:        libre-computer.repo
+Source2:        LICENSE
 # renamed from libre-computer-repos (published 2026-11-06): a host with it moves on its next upgrade
 # (package-parity-policy.md rule 6.5)
 Obsoletes:      libre-computer-repos < %{version}-%{release}
@@ -28,6 +28,7 @@ install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/zypp/repos.d/libre-compu
 %else
 install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/yum.repos.d/libre-computer.repo
 %endif
+install -Dpm 0644 %{SOURCE2} %{buildroot}%{_licensedir}/%{name}/LICENSE
 
 %posttrans
 # rpm keeps a key it has already imported: importing a renewed key (same id, new expiry) is a no-op,
@@ -36,6 +37,7 @@ rpmkeys --delete %{lc_keyid} >/dev/null 2>&1 || :
 rpmkeys --import %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-libre-computer >/dev/null 2>&1 || :
 
 %files
+%license %{_licensedir}/%{name}/LICENSE
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-libre-computer
 %if 0%{?lc_opensuse}
 %config(noreplace) %{_sysconfdir}/zypp/repos.d/libre-computer.repo

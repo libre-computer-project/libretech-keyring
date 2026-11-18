@@ -48,6 +48,7 @@ if [[ -n $suse ]]; then
 else
 	cp "$PKG_ROOT/packaging/rpm/libre-computer.repo" "$T/rpm/SOURCES/"
 fi
+cp "$PKG_ROOT/LICENSE" "$T/rpm/SOURCES/"
 cp "$PKG_ROOT/packaging/rpm/libre-computer-release.spec" "$T/rpm/SPECS/"
 
 log "building libre-computer-release $version${suse:+ for openSUSE $suse} from $(source_commit), key $(key_fpr "$T/gnupg")"
