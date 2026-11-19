@@ -44,7 +44,9 @@ cp "$PKG_ROOT/packaging/arch/PKGBUILD" "$PKG_ROOT/packaging/arch/libre-computer-
 	"$PKG_ROOT/LICENSE" "$T/build/"
 
 log "building libre-computer-keyring $version from $(source_commit), key $fpr"
-(cd "$T/build" && LC_VERSION=$version PKGEXT=.pkg.tar.zst makepkg --nodeps --noconfirm --skipinteg) \
+# PACKAGER: every package names who built it (Arch's packaging guidelines), the one name all our builds use
+(cd "$T/build" && LC_VERSION=$version PKGEXT=.pkg.tar.zst PACKAGER='autobuild <autobuild@deb.libre.computer>' \
+	makepkg --nodeps --noconfirm --skipinteg) \
 	>"$T/makepkg.log" 2>&1 || { tail -20 "$T/makepkg.log" >&2; die "makepkg failed"; }
 cp "$T/build/libre-computer-keyring-$version-1-any.pkg.tar.zst" "$out/"
 echo "$out/libre-computer-keyring-$version-1-any.pkg.tar.zst"

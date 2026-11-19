@@ -6,6 +6,8 @@ Version:        %{lc_version}
 Release:        1%{?dist}
 Summary:        Libre Computer package repository and signing key
 License:        MIT
+# the vendor zypper keeps an installed package with (openSUSE's vendor stickiness); every rpm we build names it
+Vendor:         Libre Computer
 URL:            https://packages.libre.computer/
 BuildArch:      noarch
 Source0:        RPM-GPG-KEY-libre-computer

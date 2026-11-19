@@ -30,6 +30,8 @@ case "$1" in
 		# A failure to move leaves the board on its old source and must not fail the keyring's install.
 		/usr/lib/libre-computer-archive-keyring/libre-computer-move ||
 			echo "libre-computer-archive-keyring: could not move this board to packages.libre.computer; it keeps its source" >&2
+		# the firmware's component (non-free-firmware) added to the source the move writes, if unchanged
+		/usr/lib/libre-computer-archive-keyring/libre-computer-components || true
 		;;
 esac
 #DEBHELPER#

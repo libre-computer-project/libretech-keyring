@@ -405,6 +405,9 @@ archs() {
 # board, or when there is nothing to move)
 if [ -e "$STATE/move-pending" ]; then
 	LC_MOVE_FROM_MIGRATE=1 /usr/lib/libre-computer-archive-keyring/libre-computer-move || true
+	# the firmware's component added to the source the move wrote (the postinst does the same after its move)
+	[ ! -x /usr/lib/libre-computer-archive-keyring/libre-computer-components ] ||
+		/usr/lib/libre-computer-archive-keyring/libre-computer-components || true
 	# (the keyring removed during the move's probe: the move stopped, and so does this run)
 	state_here
 	if [ -e "$STATE/move-pending" ]; then

@@ -1,0 +1,41 @@
+#!/bin/sh
+# libre-computer-components -- run by the keyring package's postinst, after libre-computer-move. Since Debian 12,
+# firmware is its own component, non-free-firmware, and packages.libre.computer publishes its firmware there. A
+# stanza of libre-computer.sources (the source libre-computer-move writes) that names packages.libre.computer/deb
+# with exactly the components it wrote, `main non-free`, gets non-free-firmware added; any other stanza, a
+# stanza the owner changed, and every other file are left as they are. Never fails the keyring's install.
+#
+# LC_SOURCES_FILE overrides the file (tests only).
+LC_URI=https://packages.libre.computer/deb
+SP=/etc/apt/sources.list.d
+eval "$(apt-config shell SP Dir::Etc::sourceparts/d 2>/dev/null)" || true
+SRC=${LC_SOURCES_FILE:-${SP%/}/libre-computer.sources}
+[ -f "$SRC" ] && [ ! -L "$SRC" ] || exit 0
+TMP=$(mktemp "$SRC.XXXXXX") || exit 0
+trap 'rm -f "$TMP"' EXIT
+# deb822: a stanza ends at an empty line; a field's value is everything after "Name:" with white space trimmed
+awk -v uri="$LC_URI" '
+	function flush(   i, ours) {
+		ours = (u == uri || u == uri "/") && c == "main non-free"
+		for (i = 1; i <= n; i++) {
+			if (ours && i == ci) { print line[i] " non-free-firmware"; changed = 1 }
+			else print line[i]
+		}
+		n = 0; u = ""; c = ""; ci = 0
+	}
+	/^[ \t]*$/ { flush(); print; next }
+	{
+		line[++n] = $0
+		if (tolower($0) ~ /^uris:/) { v = $0; sub(/^[^:]*:[ \t]*/, "", v); sub(/[ \t]+$/, "", v); u = v }
+		if (tolower($0) ~ /^components:/) { v = $0; sub(/^[^:]*:[ \t]*/, "", v); sub(/[ \t]+$/, "", v); gsub(/[ \t]+/, " ", v); c = v; ci = n }
+	}
+	END { flush(); exit changed ? 0 : 3 }
+' "$SRC" >"$TMP"
+case $? in
+	0) ;;
+	*) exit 0 ;;   # 3: nothing of ours to change; anything else: leave the file as it is
+esac
+chmod --reference="$SRC" "$TMP" 2>/dev/null || chmod 644 "$TMP"
+sync "$TMP" 2>/dev/null || true
+mv -f "$TMP" "$SRC" && echo "libre-computer-archive-keyring: $SRC: added non-free-firmware (packages.libre.computer's firmware component)"
+exit 0
