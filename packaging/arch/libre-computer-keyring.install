@@ -12,11 +12,11 @@ post_install() {
 	fi
 	# pacman has no conf.d and a package does not edit pacman.conf: the repo stanza is the administrator's to
 	# add. SigLevel = Required: pacman's default (Required DatabaseOptional) would take an unsigned database.
-	# Below [core], above [extra]: a sysupgrade takes each package from the first repo that has it. Our Mesa
-	# (replaces=) stands in for [extra]'s, so it goes above [extra]; nothing of ours replaces a [core] package,
-	# and the Arch wiki keeps unofficial repositories after the official ones they do not need to precede.
+	# At the end, after the distribution's repositories, where the Arch wiki puts an unofficial one: none of our
+	# packages shares a name with the distribution's or replaces one (our Mesa is installed by name, pacman -S
+	# mesa-libre-computer), so its place changes nothing about what an upgrade takes.
 	cat <<'EOF'
-==> To use the Libre Computer repository, add to /etc/pacman.conf, after [core] and before [extra]:
+==> To use the Libre Computer repository, add to the end of /etc/pacman.conf:
 
     [libre-computer]
     SigLevel = Required

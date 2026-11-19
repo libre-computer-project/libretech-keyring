@@ -17,14 +17,17 @@ set -euo pipefail
 # Fingerprints of keys withdrawn from trust (key-lifecycle policy, rotation). Keep a revoked key here for good.
 REVOKED=()
 
-version="" out=""
+version="" out="" pkgrel=1
 while (($#)); do
 	case $1 in
 		--version) version=${2:?}; shift 2 ;;
 		--out) out=${2:?}; shift 2 ;;
-		*) die "usage: build-arch.sh [--version YYYY.MM.DD] [--out DIR]" ;;
+		# a second build of one day's version (a published file name is never reused)
+		--pkgrel) pkgrel=${2:?}; shift 2 ;;
+		*) die "usage: build-arch.sh [--version YYYY.MM.DD] [--pkgrel N] [--out DIR]" ;;
 	esac
 done
+[[ $pkgrel =~ ^[1-9][0-9]*$ ]] || die "pkgrel $pkgrel is not a positive number"
 version=${version:-$(default_version)}
 [[ $version =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] || die "version $version is not YYYY.MM.DD"
 out=${out:-$PKG_ROOT/out/$version}
@@ -45,8 +48,9 @@ cp "$PKG_ROOT/packaging/arch/PKGBUILD" "$PKG_ROOT/packaging/arch/libre-computer-
 
 log "building libre-computer-keyring $version from $(source_commit), key $fpr"
 # PACKAGER: every package names who built it (Arch's packaging guidelines), the one name all our builds use
-(cd "$T/build" && LC_VERSION=$version PKGEXT=.pkg.tar.zst PACKAGER='autobuild <autobuild@deb.libre.computer>' \
+(cd "$T/build" && LC_VERSION=$version LC_PKGREL=$pkgrel PKGEXT=.pkg.tar.zst \
+	PACKAGER='autobuild <autobuild@deb.libre.computer>' \
 	makepkg --nodeps --noconfirm --skipinteg) \
 	>"$T/makepkg.log" 2>&1 || { tail -20 "$T/makepkg.log" >&2; die "makepkg failed"; }
-cp "$T/build/libre-computer-keyring-$version-1-any.pkg.tar.zst" "$out/"
-echo "$out/libre-computer-keyring-$version-1-any.pkg.tar.zst"
+cp "$T/build/libre-computer-keyring-$version-$pkgrel-any.pkg.tar.zst" "$out/"
+echo "$out/libre-computer-keyring-$version-$pkgrel-any.pkg.tar.zst"
