@@ -1,0 +1,5 @@
+# zypper vendor equivalence (/etc/zypp/vendors.d): our kernels were built with the kernel spec's own Vendor,
+# "The Linux Community", until 2026-11-19, and with "Libre Computer" since; zypper keeps an installed package
+# with its vendor, so without this an upgrade leaves such a kernel at the old build
+[main]
+vendors = Libre Computer,The Linux Community

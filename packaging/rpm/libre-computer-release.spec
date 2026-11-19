@@ -3,7 +3,7 @@
 # sources in SOURCES.
 Name:           libre-computer-release
 Version:        %{lc_version}
-Release:        1%{?dist}
+Release:        %{lc_release}%{?dist}
 Summary:        Libre Computer package repository and signing key
 License:        MIT
 # the vendor zypper keeps an installed package with (openSUSE's vendor stickiness); every rpm we build names it
@@ -13,6 +13,7 @@ BuildArch:      noarch
 Source0:        RPM-GPG-KEY-libre-computer
 Source1:        libre-computer.repo
 Source2:        LICENSE
+Source3:        libre-computer.vendors
 # renamed from libre-computer-repos (published 2026-11-06): a host with it moves on its next upgrade
 # (package-parity-policy.md rule 6.5)
 Obsoletes:      libre-computer-repos < %{version}-%{release}
@@ -27,6 +28,8 @@ install -Dpm 0644 %{SOURCE0} %{buildroot}%{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-
 %if 0%{?lc_opensuse}
 # (openSUSE: zypper's repository directory; build-rpm.sh --opensuse wrote the release's baseurl into it)
 install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/zypp/repos.d/libre-computer.repo
+# the kernel's earlier Vendor is ours too, so zypper up moves an installed kernel to the current build
+install -Dpm 0644 %{SOURCE3} %{buildroot}%{_sysconfdir}/zypp/vendors.d/libre-computer
 %else
 install -Dpm 0644 %{SOURCE1} %{buildroot}%{_sysconfdir}/yum.repos.d/libre-computer.repo
 %endif
@@ -43,6 +46,7 @@ rpmkeys --import %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-libre-computer >/dev/nul
 %{_sysconfdir}/pki/rpm-gpg/RPM-GPG-KEY-libre-computer
 %if 0%{?lc_opensuse}
 %config(noreplace) %{_sysconfdir}/zypp/repos.d/libre-computer.repo
+%{_sysconfdir}/zypp/vendors.d/libre-computer
 %else
 %config(noreplace) %{_sysconfdir}/yum.repos.d/libre-computer.repo
 %endif
