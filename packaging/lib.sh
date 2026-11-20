@@ -30,7 +30,16 @@ key_binary() { gpg --batch --homedir "$1" --export "$(key_fpr "$1")"; }
 # rpm names an imported key gpg-pubkey-<last 8 hex of the key id, lowercase>; `rpmkeys --delete` takes that.
 key_rpm_id() { key_fpr "$1" | tail -c 9 | tr 'A-F' 'a-f'; }
 
-# Today's UTC date, the version scheme every Libre Computer package uses.
-default_version() { date -u +%Y.%m.%d; }
+# The version every format takes (claude infra/libre-computer/packages/package-parity-policy.md rule 6.8): the
+# commit's date and the commit, YYYYMMDD.HHMMSS.g<sha8> (committer time, UTC). The release process passes it; by
+# hand, HEAD's.
+default_version() {
+	local c
+	c=$(git -C "$PKG_ROOT" rev-parse HEAD 2>/dev/null) || die "no --version given and no git HEAD to take it from"
+	printf '%s.g%s\n' "$(TZ=UTC git -C "$PKG_ROOT" log -1 --format=%cd --date=format-local:%Y%m%d.%H%M%S "$c")" "${c:0:8}"
+}
+check_version() {
+	[[ $1 =~ ^[0-9]{8}\.[0-9]{6}\.g[0-9a-f]{8}$ ]] || die "version $1 is not YYYYMMDD.HHMMSS.g<sha8>"
+}
 
 source_commit() { git -C "$PKG_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown; }

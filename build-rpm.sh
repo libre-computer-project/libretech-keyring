@@ -2,7 +2,7 @@
 # build-rpm.sh -- build libre-computer-release (noarch RPM for Fedora; it obsoletes libre-computer-repos): the dnf
 # repository definition and the key.
 #
-#   build-rpm.sh [--version YYYY.MM.DD] [--out DIR]
+#   build-rpm.sh [--version YYYYMMDD.HHMMSS.g<sha8>] [--out DIR]
 #
 # The key comes from the committed libre-computer-deb.gpg. Needs rpmbuild and gpg.
 # The package is unsigned here: RPMs are signed with the repository key before they are published. Output: the .rpm in
@@ -25,7 +25,7 @@ while (($#)); do
 		# Fedora: the release's dist tag (.fc44), which places the package in that release's repo only, as
 		# Fedora's own packages carry %{?dist}
 		--fedora) fedora=${2:?}; shift 2 ;;
-		*) die "usage: build-rpm.sh [--version YYYY.MM.DD] [--release N] [--fedora N | --opensuse tumbleweed|16.0] [--out DIR]" ;;
+		*) die "usage: build-rpm.sh [--version YYYYMMDD.HHMMSS.g<sha8>] [--release N] [--fedora N | --opensuse tumbleweed|16.0] [--out DIR]" ;;
 	esac
 done
 [[ $release =~ ^[1-9][0-9]*$ ]] || die "release $release is not a positive number"
@@ -42,7 +42,7 @@ if [[ -n ${fedora:-} ]]; then
 	dist=.fc$fedora
 fi
 version=${version:-$(default_version)}
-[[ $version =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] || die "version $version is not YYYY.MM.DD"
+check_version "$version"
 out=${out:-$PKG_ROOT/out/$version}
 command -v rpmbuild >/dev/null || die "rpmbuild not found (the rpm package)"
 

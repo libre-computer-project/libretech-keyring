@@ -1,7 +1,7 @@
 #!/bin/bash
 # build-arch.sh -- build libre-computer-keyring (pacman, arch=any) for Arch Linux and Arch Linux ARM.
 #
-#   build-arch.sh [--version YYYY.MM.DD] [--out DIR]
+#   build-arch.sh [--version YYYYMMDD.HHMMSS.g<sha8>] [--out DIR]
 #
 # Generates pacman's three keyring files from the committed libre-computer-deb.gpg:
 #   libre-computer.gpg      the public key
@@ -24,12 +24,12 @@ while (($#)); do
 		--out) out=${2:?}; shift 2 ;;
 		# a second build of one day's version (a published file name is never reused)
 		--pkgrel) pkgrel=${2:?}; shift 2 ;;
-		*) die "usage: build-arch.sh [--version YYYY.MM.DD] [--pkgrel N] [--out DIR]" ;;
+		*) die "usage: build-arch.sh [--version YYYYMMDD.HHMMSS.g<sha8>] [--pkgrel N] [--out DIR]" ;;
 	esac
 done
 [[ $pkgrel =~ ^[1-9][0-9]*$ ]] || die "pkgrel $pkgrel is not a positive number"
 version=${version:-$(default_version)}
-[[ $version =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}$ ]] || die "version $version is not YYYY.MM.DD"
+check_version "$version"
 out=${out:-$PKG_ROOT/out/$version}
 command -v makepkg >/dev/null || die "makepkg not found (the makepkg package)"
 command -v bsdtar >/dev/null || die "bsdtar not found (libarchive-tools)"
