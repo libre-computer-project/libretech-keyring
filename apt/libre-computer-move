@@ -547,8 +547,9 @@ T=$(mktemp -d)
 # refresh the system's caches from inside the postinst
 printf '#clear APT::Update::Pre-Invoke;\n#clear APT::Update::Post-Invoke;\n#clear APT::Update::Post-Invoke-Success;\n#clear APT::Update::Post-Invoke-Stats;\n#clear APT::Update::Auth-Failure;\n' > "$T/nohooks.conf"
 chmod 755 "$T"
-stanza() { # KEY: the new source's stanza
-	printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: main non-free\nSigned-By: %s\n' "$URI" "$suite" "$1"
+stanza() { # KEY: the new source's stanza (every component packages.libre.computer serves; firmware is in
+	# non-free-firmware, Debian's firmware component since 12)
+	printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: main non-free non-free-firmware\nSigned-By: %s\n' "$URI" "$suite" "$1"
 }
 
 # packages.libre.computer must be usable from here before anything changes, through the source the board

@@ -125,7 +125,7 @@ if [[ -n "$realpkgs" ]]; then
 	done
 fi
 cp "$W"/pkgs/*.deb "$new_keyring" "$P/pool/"
-[[ $expect == stay ]] || suite "$P" "$expect" main non-free
+[[ $expect == stay ]] || suite "$P" "$expect" main non-free non-free-firmware
 D=$W/deb.libre.computer/repo
 mkdir -p "$D/pool"
 cp "$deblibre_keyring" "$D/pool/"

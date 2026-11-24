@@ -5,7 +5,7 @@
 #
 # A .deb whose version ends in ~deb.libre.computer goes to <out>/deb.libre.computer/repo (suite linux, main), as
 # deb.libre.computer would serve it; every other .deb goes to <out>/packages/deb (suite bookworm, main, with an
-# empty non-free), as packages.libre.computer would. The key's public half is written to <out>/test-key.gpg.
+# empty non-free and non-free-firmware), as packages.libre.computer would. The key's public half is written to <out>/test-key.gpg.
 # Serve <out> over HTTP and hand its URL to test-board-move.sh. Nothing here is published.
 #
 # Style: software/convention/bash.md
@@ -46,7 +46,7 @@ main() {
 		fi
 	done
 	repo "$out/deb.libre.computer/repo" linux main
-	repo "$out/packages/deb" bookworm main non-free
+	repo "$out/packages/deb" bookworm main non-free non-free-firmware
 	gpg --batch --homedir "$G" --export > "$out/test-key.gpg"
 	echo "stage-board-move: deb.libre.computer: $(ls "$out/deb.libre.computer/repo/pool" | tr '\n' ' ')"
 	echo "stage-board-move: packages: $(ls "$out/packages/deb/pool" | tr '\n' ' ')"

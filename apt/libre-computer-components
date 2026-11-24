@@ -2,8 +2,9 @@
 # libre-computer-components -- run by the keyring package's postinst, after libre-computer-move. Since Debian 12,
 # firmware is its own component, non-free-firmware, and packages.libre.computer publishes its firmware there. A
 # stanza of libre-computer.sources (the source libre-computer-move writes) that names packages.libre.computer/deb
-# with exactly the components it wrote, `main non-free`, gets non-free-firmware added; any other stanza, a
-# stanza the owner changed, and every other file are left as they are. Never fails the keyring's install.
+# with exactly the components an older libre-computer-move wrote, `main non-free`, gets non-free-firmware added
+# (the move writes all three since); any other stanza, a stanza the owner changed, and every other file are left
+# as they are. Never fails the keyring's install.
 #
 # LC_SOURCES_FILE overrides the file (tests only).
 LC_URI=https://packages.libre.computer/deb

@@ -80,12 +80,15 @@ cp "$W/test-key.gpg" "$R/test-key.gpg"
 reindex() { # the repository's index and signature, after its pool changed
 local s
 for s in trixie; do
-	mkdir -p "$R/dists/$s/main/binary-arm64" "$R/dists/$s/main/binary-all" "$R/dists/$s/non-free/binary-arm64"
+	mkdir -p "$R/dists/$s/main/binary-arm64" "$R/dists/$s/main/binary-all" "$R/dists/$s/non-free/binary-arm64" \
+		"$R/dists/$s/non-free-firmware/binary-arm64"
 	(cd "$R" && apt-ftparchive packages pool > "dists/$s/main/binary-arm64/Packages")
 	: > "$R/dists/$s/non-free/binary-arm64/Packages"
+	: > "$R/dists/$s/non-free-firmware/binary-arm64/Packages"
 	cp "$R/dists/$s/main/binary-arm64/Packages" "$R/dists/$s/main/binary-all/Packages"
+	# the components packages.libre.computer serves
 	apt-ftparchive -o APT::FTPArchive::Release::Codename="$s" -o APT::FTPArchive::Release::Suite="$s" \
-		-o APT::FTPArchive::Release::Components="main non-free" -o APT::FTPArchive::Release::Architectures="arm64 all" \
+		-o APT::FTPArchive::Release::Components="main non-free non-free-firmware" -o APT::FTPArchive::Release::Architectures="arm64 all" \
 		release "$R/dists/$s" > "$W/Release"
 	mv "$W/Release" "$R/dists/$s/Release"
 	rm -f "$R/dists/$s/InRelease"
@@ -132,7 +135,7 @@ setup
 check "S1: the image has the old names installed (the test's precondition)" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-gpio && installed libretech-dtoverlay && installed libretech-alsa-ucm-conf && installed xserver-xorg-video-libretech"
 install_keyring
 check "S1: the keyring packages install" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring && installed libretech-keyring"
-check "S1: the source now names the repository, trixie, main non-free, signed by the shipped key path" bash -c "grep -qx 'URIs: file:///srv/test-repo' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Suites: trixie' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Components: main non-free' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Signed-By: /usr/share/keyrings/libre-computer-deb.gpg' '$mnt/etc/apt/sources.list.d/libre-computer.sources'"
+check "S1: the source now names the repository, trixie, main non-free non-free-firmware, signed by the shipped key path" bash -c "grep -qx 'URIs: file:///srv/test-repo' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Suites: trixie' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Components: main non-free non-free-firmware' '$mnt/etc/apt/sources.list.d/libre-computer.sources' && grep -qx 'Signed-By: /usr/share/keyrings/libre-computer-deb.gpg' '$mnt/etc/apt/sources.list.d/libre-computer.sources'"
 check "S1: deb.libre.computer's source is set aside, read by apt no more" bash -c "test ! -e '$mnt/etc/apt/sources.list.d/libre-computer-deb.list' && test -s '$mnt/var/lib/libre-computer-archive-keyring/moved-sources/libre-computer-deb.list'"
 check "S1: the migration is pending, its retry timer enabled" bash -c "test -e '$mnt/var/lib/libre-computer-archive-keyring/migrate-pending' && test -L '$mnt/etc/systemd/system/timers.target.wants/libre-computer-migrate.timer'"
 check "S1: no boot target waits on the migration (the service has no [Install])" bash -c "! grep -q '^\[Install\]' '$mnt/usr/lib/systemd/system/libre-computer-migrate.service' && test ! -e '$mnt/etc/systemd/system/multi-user.target.wants/libre-computer-migrate.service'"
@@ -177,7 +180,7 @@ cleanup
 echo "== S4: a board already on packages.libre.computer"
 setup
 rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
-printf 'Types: deb\nURIs: https://packages.libre.computer/deb\nSuites: trixie\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+printf 'Types: deb\nURIs: https://packages.libre.computer/deb\nSuites: trixie\nComponents: main non-free non-free-firmware\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 cp "$mnt/etc/apt/sources.list.d/libre-computer.sources" "$W/s4.before"
 install_keyring
 check "S4: its source is untouched" cmp -s "$W/s4.before" "$mnt/etc/apt/sources.list.d/libre-computer.sources"
@@ -993,7 +996,7 @@ echo "== S68: a move stopped after step 1 rewrote libre-computer.sources (it hel
 setup
 rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
 # what the stopped run left: the new stanza in place, its moving mark and retry mark, no migration marks
-printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main non-free non-free-firmware\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 mkdir -p "$mnt$S"
 touch "$mnt$S/moving" "$mnt$S/move-pending"
 dpkg-deb --fsys-tarfile "$new_keyring" | tar -xO ./usr/lib/libre-computer-archive-keyring/libre-computer-move > "$mnt/tmp/lc-move"
@@ -1078,7 +1081,7 @@ cleanup
 
 echo "== S77: a move stopped after step 1 on bookworm, the board upgraded to trixie before the next run: step 2 still finishes"
 setup
-printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: bookworm\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: bookworm\nComponents: main non-free non-free-firmware\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
 mkdir -p "$mnt$S"
 echo bookworm > "$mnt$S/moving"
@@ -1090,7 +1093,7 @@ cleanup
 
 echo "== S78: the same stop and upgrade, the owner's release upgrade having edited the stanza: step 2 still finishes"
 setup
-printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main non-free non-free-firmware\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
 mkdir -p "$mnt$S"
 echo bookworm > "$mnt$S/moving"
@@ -1102,7 +1105,7 @@ cleanup
 
 echo "== S79: the stop on bookworm, the upgrade to trixie, a deb.libre.computer entry left elsewhere: it moves, the bookworm stanza kept (README Known limits)"
 setup
-printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: bookworm\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: bookworm\nComponents: main non-free non-free-firmware\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 mkdir -p "$mnt$S"
 echo bookworm > "$mnt$S/moving"
 touch "$mnt$S/move-pending"
@@ -1113,7 +1116,7 @@ cleanup
 
 echo "== S80: a move cut short after step 1, the init no longer systemd: no migration scheduled that could not run"
 setup
-printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main non-free\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
+printf 'Types: deb\nURIs: file:///srv/test-repo\nSuites: trixie\nComponents: main non-free non-free-firmware\nSigned-By: /usr/share/keyrings/libre-computer-deb.gpg\n' > "$mnt/etc/apt/sources.list.d/libre-computer.sources"
 rm -f "$mnt/etc/apt/sources.list.d/libre-computer-deb.list"
 mkdir -p "$mnt$S"
 echo trixie > "$mnt$S/moving"
