@@ -132,6 +132,13 @@ install_keyring() { # the two keyring packages, through apt as a board takes the
 
 echo "== S1: a Debian 13 board on deb.libre.computer"
 setup
+# every scenario starts from a board that has not moved: an image already carrying libre-computer-archive-keyring
+# would run them all against the wrong start and print results that read as real ones, so it is refused here
+if installed libre-computer-archive-keyring; then
+	echo "ABORT: $img already has libre-computer-archive-keyring installed (a board that has moved); use an image" \
+		"whose board still reads deb.libre.computer, with libretech-keyring" >&2
+	exit 2   # (the EXIT trap unmounts)
+fi
 check "S1: the image has the old names installed (the test's precondition)" bash -c "$(declare -f installed); mnt='$mnt'; installed libretech-gpio && installed libretech-dtoverlay && installed libretech-alsa-ucm-conf && installed xserver-xorg-video-libretech"
 install_keyring
 check "S1: the keyring packages install" bash -c "$(declare -f installed); mnt='$mnt'; installed libre-computer-archive-keyring && installed libretech-keyring"
